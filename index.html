@@ -212,6 +212,15 @@ table.t tr.cur td{background:#141b27;color:var(--text)}
 .sp-in table.t th,.sp-in table.t td{white-space:normal;vertical-align:top;padding:6px 6px}.sp-in table.t{font-size:11.5px}
 @media(max-width:600px){#spotCards{grid-template-columns:1fr}.spf{grid-template-columns:1fr 1fr 40px}.sp-ch{grid-template-columns:1fr!important}}
 @media(max-width:380px){.tab .ts{font-size:7px;letter-spacing:-.1px}.tab{padding-left:0;padding-right:0}.tab svg{width:17px;height:17px}}
+
+/* the METHOD block of a signal card: which method, which structure, what it predicts, why the stop / targets sit where they do */
+.signal-card .method{border:1px solid #1c2736;border-left:3px solid var(--blue,#4F8CFF);border-radius:8px;padding:8px 10px;margin:8px 0;display:flex;flex-direction:column;gap:5px;background:rgba(79,140,255,.04)}
+.signal-card.sell .method{border-left-color:var(--red,#F43F5E)}.signal-card.buy .method{border-left-color:var(--green,#22C55E)}
+.signal-card .method .mrow{display:grid;grid-template-columns:86px 1fr;gap:8px;align-items:start;font-size:12.5px;line-height:1.45}
+.signal-card .method .mrow>span{font:700 10px var(--mono);letter-spacing:.08em;color:#8593A8;padding-top:2px}
+.signal-card .method .mrow>div{min-width:0;overflow-wrap:anywhere}
+@media(max-width:480px){.signal-card .method .mrow{grid-template-columns:1fr;gap:1px}}
+.signal-card ul.ev small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 </style>
 </head>
 <body>
@@ -2027,11 +2036,11 @@ const ENGINE_DEFS=[
  _E(16,'Level-2 order-book intelligence','BOOK','live','partial','live order-book snapshot',['Depth pressure'],'same snapshot as engine 9; queue dynamics / resilience need a book stream'),
  _E(17,'VPIN (informed-trading probability)','FLOW','context','partial','candles + taker-buy volume',[],'VPIN-lite on bar buckets; used as a toxicity flag, it measures one-sidedness not direction'),
  _E(18,'VWAP & anchored-VWAP intelligence','PROF','signal','full','candles (volume)',['Anchored-VWAP reclaim / loss','VWAP trend pullback'],''),
- _E(19,'Market profile & TPO','PROF','none','none','candles',[],'NOT BUILT: TPO letters / initial balance / single prints need session time-at-price; value area, POC, HVN and LVN are covered by engine 3'),
+ _E(19,'Market profile & TPO','PROF','signal','partial','candles (30-minute periods of each UTC day)',['TPO: 80% rule (re-entry into the previous value area)','TPO: single-print tail (excess) and return'],'80 % rule and single-print tails on a UTC-day profile (timeframes up to 30 minutes). Initial balance, profile shapes and open types are not built: a 24-hour market has no opening auction. Value area / POC / HVN / LVN also live in engine 3'),
  _E(20,'Statistical arbitrage & mean reversion','STAT','signal','partial','candles',['Z-score extreme reversion (range regime)'],'single-asset z-score + Ornstein-Uhlenbeck half-life; cointegration needs pairs (not built)'),
  _E(21,'Adaptive support & resistance','STRUCT','context','partial','candles',[],'level strength and decay live inside the zone / pool quality scores; no separate signals'),
  _E(22,'Fractal market structure & multiscale analysis','CTX','context','partial','candles',[],'multi-timeframe swing structure and Hurst exponent; fractal dimension is not computed'),
- _E(23,'Elliott wave','CTX','none','none','candles',[],'NOT BUILT: wave counts are subjective and cannot be validated honestly'),
+ _E(23,'Elliott wave','STRUCT','signal','partial','candles',['Elliott: wave-3 entry after a 38–79% wave 2'],'only the wave 1-2-3 entry, tested against inviolable rule 1 and the Fibonacci guideline on confirmed swings; the five-wave subdivision, alternation and ABC corrections are not tested — a count is an interpretation'),
  _E(24,'Harmonic patterns & Fibonacci confluence','PATT','signal','partial','candles',['Gartley','Bat','Butterfly','Crab','AB=CD'],'five patterns completed at the projected reversal zone; Shark and Cypher are not built'),
  _E(25,'Market cycle & spectral analysis','CTX','none','none','candles',[],'NOT BUILT: Fourier / Hilbert / wavelet cycles are not shown to add value on noisy crypto bars and would be decoration'),
  _E(26,'Quantitative trend & state-space models','STAT','signal','partial','candles',['Kalman trend flip'],'Kalman local-trend filter; hidden Markov models are not built'),
@@ -2302,7 +2311,7 @@ function engineScan(F,t,o){
     const k=h.id+'|'+h.setup+'|'+h.dir+'|'+st, b=best.get(k); if(!b||h.strength>b.strength) best.set(k,h); }
   let res=[...best.values()]; if(typeof ictFinish==='function') res=ictFinish(F,t,res);
   /* by default only CONFIRMED setups are returned (every consumer that issues or counts signals); o.all adds the DEVELOPING and INVALIDATED ones for the radar */
-  if(!o.all) res=res.filter(h=>!h.stage||h.stage==='CONFIRMED');
+  if(!o.all) res=res.filter(h=>(!h.stage||h.stage==='CONFIRMED')&&!(typeof enginePaused==='function'&&enginePaused(h.id)));
   return res.sort((x,y)=>y.strength-x.strength);
 }
 /* agreement counted per dependency cluster: a cluster contributes its strongest CONFIRMED hit only (ranked by strength, with a small measured-performance factor between similar setups).
@@ -2872,6 +2881,551 @@ function ictFinish(F,t,res){
 _DET.push(dUnicorn,dICT2022,dTurtleSoup,dMitigation,dMarketMaker,dAMD);
 if(typeof module!=='undefined') module.exports={ICT_IDS,ICT_PREC,ENGINE_ICT2,_ictRetro,engPerfSet,perfMul,ictFit,ictFinish,dUnicorn,dICT2022,dTurtleSoup,dMitigation,dMarketMaker,dAMD,_ictStage,_ictEmit,_failedSwing,_ictTargets};
 
+/* ===== src/engine/adv_m1.js ===== */
+/* ================================================================
+   ORBIT METHODS · BATCH 1 — three classic methods written as explicit rules (pure — no DOM, no network, causal: bar t uses candles <= t only)
+     E62  Volume Spread Analysis (VSA)   effort (volume) against result (spread, close) at a turning area, CONFIRMED by the next candles
+     E63  Turtle trading                 Donchian channel breakouts: System 1 (20 bars, exit 10) and System 2 (55 bars, exit 20), N = ATR(20), stop 2 N
+     E64  Dow theory                     primary trend (higher highs + higher lows), a secondary reaction of 33–66 % that holds the prior swing, and the trend resumption
+   Strength ranks how cleanly the textbook rule is met — it is NOT a win probability.  What each engine's setups are really worth is measured per engine on closed signals.
+
+   ---- E62 VSA (cluster FLOW: it reads the same event as E01 — volume, spread and close of a candle — so the two count as one piece of evidence) ----
+   volume ratio rv = candle volume / mean of the previous 20 candles · spread = high − low · closePos = (close − low) / spread · ATR = the ATR at the climax candle
+     CLIMAX (selling climax / stopping volume, long)   a DOWN bar (close below the previous close) · rv >= 2.5 ("ultra-high") · spread >= 1.5 ATR ("wide") · closePos >= 0.5 (closes off the low)
+                                                       · after a decline: the highest high of the previous 10 bars is >= 3 ATR above the bar's low · the low is within 0.25 ATR of the 20-bar low.
+                                                       (buying climax / upthrust: the mirror — an UP bar, closePos <= 0.5, after an advance, at the 20-bar high)
+     ABSORPTION (effort without result)                rv >= 2.5 with a NARROW spread (<= 0.8 ATR) at the 20-bar low (support) after a decline >= 2.5 ATR; mirror at the 20-bar high (resistance).
+     CONFIRMATION (needed before anything is reported; within 3 candles of the setup being confirmed)
+        test            a narrow bar (spread <= 0.8 ATR) on LOW volume (rv <= 1.0 and <= 60 % of the climax volume) that retests the lower part of the climax bar without undercutting its low
+                        by more than 0.25 ATR and closes up ("no supply"; for shorts: "no demand")
+        strength        an up bar that closes above the midpoint of the climax bar with a body >= 0.3 ATR on at least average volume (sign of strength)
+        close away      (absorption) a candle that closes beyond the absorption bar's high (shorts: low) with a body >= 0.3 ATR
+     STOP beyond the climax extreme (−0.25 ATR); targets = the nearest unswept liquidity pools (helper _ictTargets), no pool in range -> no target (the plan layer then uses risk multiples).
+
+   ---- E63 Turtle (cluster STRUCT: a channel break is a structure break) ----
+   N = Wilder ATR with period 20.  System 1 = CLOSE beyond the highest high / lowest low of the previous 20 candles (current candle excluded), exit = the opposite 10-candle channel.
+   System 2 = the same with 55 candles, exit = the opposite 20-candle channel (always taken).  Stop = entry ∓ 2 N.  Simplified Turtle filter: a System-1 breakout is skipped when a close-breakout
+   in the same direction at 20 candles already happened in the previous 20 candles (the original rule skips after a WINNING breakout; the winner/loser state is not tracked here).
+   Breakout-candle quality (an addition to the original rule, chosen for precision): the breakout candle closes in the outer 35 % of its range on at least 1.2 x the average volume.  Freshness: the breakout candle is at most 3 candles old, closes no more than 1.5 N beyond the channel edge (a bigger candle is a chase / news bar, not an entry; the original entry is at the edge) and price has not run more than 1 N beyond its close.  Strength: breakout distance in N, volume expansion, channel width (a
+   channel narrower than 3 N is a squeeze-sized range and scores lower), and whether the close is also on the right side of the 55-candle channel's midpoint.  A bare breakout is below the
+   reporting threshold on purpose — it needs measurable support (distance, volume, width).
+
+   ---- E64 Dow theory (cluster STRUCT) ----
+   Primary uptrend = the last two confirmed swing highs AND swing lows rise (L0 < L1, H0 < H1; mirrored for a downtrend) and the primary leg L1 -> H1 is >= 2 ATR.
+   Secondary reaction = the next swing low L2 retraces 33 – 66 % of that leg AND holds the prior swing low (L2 > L1).  Resumption = the first CLOSE beyond the last swing high H1.
+   Confirmation by the second "average": when a BTC reference is supplied (and the coin is not BTC), BTC's own last two swing highs and lows must point the same way — otherwise the setup is
+   reported as unconfirmed with a lower strength.  Volume should expand on the primary leg and contract on the reaction (it moves the strength: without it a setup falls below the reporting threshold unless other support is present).
+   Stop beyond the reaction extreme (−0.25 ATR); targets = the nearest liquidity pools plus the equal-leg projection (L2 + leg).
+   ================================================================ */
+const ENGINE_M1=[
+ _E(62,'Volume spread analysis (effort vs result)','FLOW','signal','partial','candles (volume, spread, close)',['VSA: climax / absorption at a turning area, confirmed by a test or a sign of strength'],'ultra-high volume on a wide (climax) or narrow (absorption) bar at a 20-candle extreme after a decline / advance, then a low-volume test, a sign of strength or a close away; candle-level volume only (no tick data), the 20-candle volume mean is the "average"'),
+ _E(63,'Turtle trading (Donchian breakout)','STRUCT','signal','full','candles',['Turtle: Donchian channel breakout (System 1 / System 2)'],'close beyond the 20-candle (System 1) or 55-candle (System 2) channel, N = ATR(20), stop 2 N, exit at the opposite 10 / 20-candle channel (a trailing exit — no fixed target); the winner/loser filter of System 1 is simplified to "no same-direction 20-candle breakout in the previous 20 candles"'),
+ _E(64,'Dow theory (primary trend, secondary reaction, resumption)','STRUCT','signal','partial','candles (coin + BTC)',['Dow: trend resumption after a 33–66% secondary reaction'],'swing-based reading of the primary trend (higher highs + higher lows), a secondary reaction that retraces 33–66% and holds the prior swing, and the break of the last swing extreme; BTC is the second "average" (needs the BTC reference — without it the setup is reported as not confirmed by a second market)')
+];
+ENGINE_M1.forEach(e=>{ ENG_BY[e.id]=e; ENGINE_EXT.push(e); ENGINE_ALL.push(e); });
+
+/* ---------------- shared helpers ---------------- */
+/* the extreme of an array over [a, b] (inclusive) */
+function _mxRange(arr,a,b,hi){ let m=hi?-Infinity:Infinity; for(let j=Math.max(0,a);j<=b;j++){ const v=arr[j]; if(hi?v>m:v<m) m=v; } return m; }
+/* the textbook description of a target list for an exit plan */
+function _tgtTxt(info){ return info.map(x=>pf(x.p)+(x.kind&&KIND_TXT[x.kind]?' ('+KIND_TXT[x.kind]+')':x.kind==='projection'?' (equal-leg projection)':'')).join(' → '); }
+/* Wilder ATR with period 20 (Turtle "N"), cached on the feature object; value i uses candles <= i only */
+function _atr20(F){
+  if(F._n20) return F._n20; const n=F.H.length, N=new Array(n).fill(NaN), tr=new Array(n); let s=0;
+  for(let i=0;i<n;i++){ tr[i]=i?Math.max(F.H[i]-F.L[i],Math.abs(F.H[i]-F.C[i-1]),Math.abs(F.L[i]-F.C[i-1])):F.H[i]-F.L[i];
+    if(i<19) s+=tr[i]; else if(i===19){ s+=tr[i]; N[i]=s/20; } else N[i]=(19*N[i-1]+tr[i])/20; }
+  return (F._n20=N);
+}
+
+/* ================= E62 VSA ================= */
+/* volume / spread / close facts of candle j */
+function _vsaBar(F,j){ const a=F.atr[j], sp=F.H[j]-F.L[j]; return {sp:sp/a,cp:sp>0?(F.C[j]-F.L[j])/sp:.5,rv:F.rv[j],a}; }
+/* is candle j a VSA turning-area candle for direction d (d>0: a selling climax / absorption at support, d<0: the mirror)?  Returns {kind:'CLIMAX'|'ABSORB', sp, cp, rv, move, ext} or null */
+function _vsaClimax(F,j,d){
+  if(j<30||!(F.atr[j]>0)) return null; const b=_vsaBar(F,j), a=b.a; if(!(b.rv>=2.5)||!(F.H[j]>F.L[j])) return null;
+  const move=d>0?_mxRange(F.H,j-10,j-1,true)-F.L[j]:F.H[j]-_mxRange(F.L,j-10,j-1,false);                 /* the fall (rise) into the candle */
+  const atExt=d>0?F.L[j]<=_mxRange(F.L,j-20,j-1,false)+.25*a:F.H[j]>=_mxRange(F.H,j-20,j-1,true)-.25*a;      /* at the 20-candle low (high) */
+  if(!atExt) return null;
+  const down=d>0?F.C[j]<F.C[j-1]:F.C[j]>F.C[j-1];
+  if(down&&b.sp>=1.5&&(d>0?b.cp>=.5:b.cp<=.5)&&move>=3*a) return {kind:'CLIMAX',sp:b.sp,cp:b.cp,rv:b.rv,move:move/a,ext:d>0?F.L[j]:F.H[j]};
+  if(b.sp<=.8&&move>=2.5*a&&(d>0?b.cp>=.4:b.cp<=.6)) return {kind:'ABSORB',sp:b.sp,cp:b.cp,rv:b.rv,move:move/a,ext:d>0?F.L[j]:F.H[j]};
+  return null;
+}
+/* does candle c confirm the turning-area candle j (c > j)?  Returns {kind:'test'|'strength'|'away', ...} or null */
+function _vsaConfirm(F,j,c,d,cx){
+  const a=F.atr[c], o=F.O[c], cl=F.C[c], sp=(F.H[c]-F.L[c])/a, body=Math.abs(cl-o)/a, aj=F.atr[j], lo=F.L[j], hi=F.H[j], mid=(hi+lo)/2;
+  if(cx.kind==='CLIMAX'){
+    const spj=hi-lo, testZone=d>0?(F.L[c]>=lo-.25*aj&&F.L[c]<=lo+.6*spj):(F.H[c]<=hi+.25*aj&&F.H[c]>=hi-.6*spj), cpc=F.H[c]>F.L[c]?(cl-F.L[c])/(F.H[c]-F.L[c]):.5;
+    if(sp<=.8&&F.rv[c]<=1&&F.V[c]<=.6*F.V[j]&&testZone&&(d>0?cl>o&&cpc>=.5:cl<o&&cpc<=.5)) return {kind:'test',sp,rv:F.rv[c],v:F.V[c]/F.V[j]};
+    if(body>=.3&&F.rv[c]>=1&&(d>0?cl>o&&cl>mid:cl<o&&cl<mid)) return {kind:'strength',sp,rv:F.rv[c],body};
+    return null;
+  }
+  if(body>=.3&&(d>0?cl>o&&cl>hi:cl<o&&cl<lo)) return {kind:'away',sp,rv:F.rv[c],body};
+  return null;
+}
+function dVSA(F,t,out){
+  if(t<60) return; const aT=F.atr[t], px=F.C[t]; if(!(aT>0)) return;
+  for(const d of [1,-1]){
+    let best=null;
+    for(let j=t-1;j>=Math.max(30,t-8);j--){
+      const cx=_vsaClimax(F,j,d); if(!cx) continue; const aj=F.atr[j], inval=d>0?F.L[j]-.25*aj:F.H[j]+.25*aj;
+      let c=-1,cf=null;
+      for(let k=j+1;k<=t;k++){
+        if(d>0?F.L[k]<=inval:F.H[k]>=inval){ c=-2; break; }                                        /* the extreme was undercut: the idea is dead */
+        const x=_vsaConfirm(F,j,k,d,cx); if(x&&k>=j+1){ c=k; cf=x; break; } }
+      if(c<0||t-c>3) continue;
+      if(d>0?px>F.H[c]+1.0*aT:px<F.L[c]-1.0*aT) continue;                                          /* the move already ran away from the confirmation */
+      const risk=Math.abs(px-inval); if(!(d>0?px>inval:px<inval)||risk>4*aT||risk<.3*aT) continue;
+      const T=_ictTargets(F,t,d,px,risk,c); let tg=T.list; if(tg.length&&Math.abs(tg[tg.length-1].p-px)<1.5*risk) tg=[];       /* a target must leave >= 1.5 R of room */
+      const s=.5+(cx.rv>=3.5?.05:0)+(cx.kind==='CLIMAX'&&cx.sp>=2?.03:0)+(cx.kind==='CLIMAX'&&(d>0?cx.cp>=.65:cx.cp<=.35)?.03:0)+(cx.move>=4?.03:0)
+        +(F.pools.some(P=>_liveP(P,j)&&P.side===(d>0?'L':'H')&&Math.abs(P.p-cx.ext)<=.5*aj)?.04:0)+(cf.kind==='test'&&cf.rv<=.6?.04:cf.kind==='test'?.02:.02)+(F.hasDelta&&(d>0?F.dl[c]>0:F.dl[c]<0)?.03:0)-.02*(t-c);
+      if(!best||s>best.s) best={s,j,c,cx,cf,inval,risk,tg,aj,d};
+    }
+    if(!best) continue;
+    const {j,c,cx,cf,inval,tg}=best, dn=d>0, ext=cx.ext, lbl=cx.kind==='CLIMAX'?(dn?(cx.sp>=2&&cx.rv>=3?'Selling climax':'Stopping volume'):(F.H[j]>_mxRange(F.H,j-20,j-1,true)?'Upthrust on high volume':'Buying climax')):(dn?'Absorption at support (effort without result)':'Absorption at resistance (effort without result)');
+    const zLo=dn?Math.max(F.L[c],F.L[j]):F.L[c], zHi=dn?F.H[c]:Math.min(F.H[c],F.H[j]); let eLo=Math.min(zLo,zHi), eHi=Math.max(zLo,zHi); if(!(eHi>eLo)){ eLo=px-.1*aT; eHi=px+.1*aT; }
+    const cfTxt=cf.kind==='test'?'confirmed by a test: a narrow bar ('+cf.sp.toFixed(1)+' ATR) on low volume (×'+cf.rv.toFixed(1)+' the average, '+Math.round(cf.v*100)+'% of the climax volume) that closed '+(dn?'up':'down')
+      :cf.kind==='strength'?'confirmed by '+(dn?'a sign of strength':'a sign of weakness')+': a '+(dn?'bullish':'bearish')+' candle with a '+cf.body.toFixed(1)+' ATR body closed beyond the midpoint of the climax bar on volume ×'+cf.rv.toFixed(1)
+      :'confirmed by a close away: a '+(dn?'bullish':'bearish')+' candle ('+cf.body.toFixed(1)+' ATR body) closed '+(dn?'above the high':'below the low')+' of the absorption bar';
+    const evid=[lbl+': volume ×'+cx.rv.toFixed(1)+' the 20-candle average on a '+(cx.sp>=1?'wide':'narrow')+' bar ('+cx.sp.toFixed(1)+' ATR), closing in the '+(cx.cp>=.5?'upper':'lower')+' '+Math.round((cx.cp>=.5?cx.cp:1-cx.cp)*100)+'% after a '+cx.move.toFixed(1)+' ATR '+(dn?'decline':'advance')+' at the 20-candle '+(dn?'low':'high')+' '+pf(ext),cfTxt+' ('+(t-c)+' candle'+(t-c===1?'':'s')+' ago)'];
+    const checks=['ultra-high volume ×'+cx.rv.toFixed(1),cx.kind==='CLIMAX'?'wide '+(dn?'down':'up')+' bar '+cx.sp.toFixed(1)+' ATR closing '+(dn?'off the low':'off the high'):'narrow bar '+cx.sp.toFixed(1)+' ATR — effort without result','at the 20-candle '+(dn?'low (support)':'high (resistance)')+' after a '+cx.move.toFixed(1)+' ATR '+(dn?'fall':'rise'),cf.kind==='test'?'low-volume test':cf.kind==='strength'?'sign of '+(dn?'strength':'weakness'):'close away from the absorption bar'];
+    const exit='stop '+pf(inval)+' (beyond the climax '+(dn?'low':'high')+' − 0.25 ATR); '+(tg.length?'targets '+_tgtTxt(tg):'no ranked liquidity in range — the plan layer uses risk multiples')+'; stand aside if price closes '+(dn?'below ':'above ')+pf(ext)+' (the climax extreme) or the next '+(dn?'rally':'drop')+' fades on rising volume';
+    out.push(_hit('E62','VSA: climax / absorption at a turning area, confirmed by a test or a sign of strength',d,best.s,evid,{inval,tgt:tg.length?tg.map(x=>x.p):null,entry:[eLo,eHi],age:t-c,lvl:ext,
+      meta:{model:lbl,expect:dn?'the professional buying absorbed the selling at the low: after the test / confirmation price is expected to leave the area and travel back toward the supply above it':'the professional selling absorbed the buying at the high: after the test / confirmation price is expected to leave the area and travel back toward the demand below it',checks,exit,climax:{i:j,lo:F.L[j],hi:F.H[j],rv:Math.round(cx.rv*10)/10},confirm:{i:c,kind:cf.kind}}}));
+  }
+}
+
+/* ================= E63 Turtle ================= */
+/* the Donchian channel of the n candles BEFORE candle j: {hi, lo} */
+function _donch(F,j,n){ return {hi:_mxRange(F.H,j-n,j-1,true),lo:_mxRange(F.L,j-n,j-1,false)}; }
+/* is candle j a close-breakout of the previous n candles in direction d?  Returns {lvl, dist (in N), ch} or null */
+function _turtleBreak(F,j,n,d){
+  if(j<n+1) return null; const N=_atr20(F)[j]; if(!(N>0)) return null; const ch=_donch(F,j,n), cl=F.C[j];
+  if(d>0?cl>ch.hi:cl<ch.lo) return {lvl:d>0?ch.hi:ch.lo,dist:Math.abs(cl-(d>0?ch.hi:ch.lo))/N,ch,N};
+  return null;
+}
+function dTurtle(F,t,out){
+  if(t<60) return; const aT=F.atr[t], px=F.C[t]; if(!(aT>0)) return; const NA=_atr20(F);
+  for(const d of [1,-1]){
+    let best=null;
+    for(let j=t;j>=t-3;j--){
+      if(j<57) continue; const N=NA[j]; if(!(N>0)) continue;
+      const b55=_turtleBreak(F,j,55,d), b20=b55||_turtleBreak(F,j,20,d); if(!b20) continue;
+      const sys2=!!b55; let ok=true;
+      if(b20.dist>1.5) continue;                                                                           /* a close more than 1.5 N beyond the channel edge is a chase / news candle, not the Turtle entry (the original entry is AT the channel edge) */
+      { const rg=F.H[j]-F.L[j], cpj=rg>0?(F.C[j]-F.L[j])/rg:.5;                                                /* breakout-candle quality (added to the original rule on purpose): it must close in the outer 35 % of its range and on at least 1.2 x the average volume — a wick-driven or volume-less break is the classic false breakout */
+        if(d>0?cpj<.65:cpj>.35) continue; if(!(F.rv[j]>=1.2)) continue; }
+      if(!sys2){ for(let k=j-1;k>=j-20&&ok;k--) if(_turtleBreak(F,k,20,d)) ok=false; if(!ok) continue; }          /* simplified Turtle filter for System 1 */
+      /* the breakout must be the FIRST close beyond the channel in this run: an earlier close of this window beyond the same level means it is not fresh */
+      let first=true; for(let k=j-1;k>=t-3&&k>=57;k--) if(_turtleBreak(F,k,sys2?55:20,d)) first=false; if(!first) continue;
+      const entry=F.C[j], inval=entry-d*2*N;
+      if((d>0?px<=inval:px>=inval)) continue; for(let k=j+1;k<=t;k++) if(d>0?F.L[k]<=inval:F.H[k]>=inval){ ok=false; break; } if(!ok) continue;
+      if(Math.abs(px-entry)>1*N&&(d>0?px>entry:px<entry)) continue;                                      /* price already ran > 1 N beyond the breakout close */
+      if(d>0?px<b20.lvl-.5*N:px>b20.lvl+.5*N) continue;                                                  /* it fell back through the channel edge: a failed breakout */
+      const risk=Math.abs(px-inval); if(risk>4*aT) continue;
+      const c55=_donch(F,j,55), mid55=(c55.hi+c55.lo)/2, width=(b20.ch.hi-b20.ch.lo)/N, wideRef=sys2?(c55.hi-c55.lo)/N:width;
+      const s=(sys2?.5:.46)+(b20.dist>=.6?.05:b20.dist>=.3?.03:0)+(F.rv[j]>=2.2?.06:F.rv[j]>=1.5?.04:0)+(wideRef>=5?.03:wideRef<3?-.08:0)+(sys2?0:(d>0?F.C[j]>mid55:F.C[j]<mid55)?.03:-.03)+(F.hasDelta&&(d>0?F.dl[j]>0:F.dl[j]<0)?.02:0)-.02*(t-j);
+      if(!best||s>best.s) best={s,j,sys2,b:b20,N,entry,inval,risk,width:wideRef};
+    }
+    if(!best) continue;
+    const {j,sys2,b,N,entry,inval,width}=best, dn=d>0, n=sys2?55:20, nx=sys2?20:10, exL=dn?_mxRange(F.L,t-nx,t-1,false):_mxRange(F.H,t-nx,t-1,true);
+    const lo=dn?b.lvl:Math.min(entry,b.lvl-.1*N), hi=dn?Math.max(entry,b.lvl+.1*N):b.lvl;
+    out.push(_hit('E63','Turtle: Donchian channel breakout (System 1 / System 2)',d,best.s,['System '+(sys2?2:1)+': the close '+pf(entry)+' broke the '+n+'-candle '+(dn?'high':'low')+' '+pf(b.lvl)+' by '+b.dist.toFixed(2)+' N on volume ×'+F.rv[j].toFixed(1)+' ('+(t-j)+' candle'+(t-j===1?'':'s')+' ago)','N (ATR 20) = '+pf(N)+' → stop 2 N = '+pf(inval)+'; the '+n+'-candle channel is '+width.toFixed(1)+' N '+(width>=5?'wide':width<3?'narrow (squeeze-sized — lower strength)':'wide enough')],
+      {inval,tgt:null,entry:[Math.min(lo,hi),Math.max(lo,hi)],age:t-j,lvl:b.lvl,
+        meta:{model:'Turtle System '+(sys2?'2 (55-candle breakout)':'1 (20-candle breakout)'),expect:'a close beyond the '+n+'-candle channel is a volatility expansion; the Turtle rule is to trade the break and let the trend run until the opposite '+nx+'-candle channel is broken',
+          checks:[n+'-candle '+(dn?'high':'low')+' broken on a close ('+b.dist.toFixed(2)+' N)',sys2?'System 2 (always taken)':'no same-direction 20-candle breakout in the previous 20 candles','volume ×'+F.rv[j].toFixed(1)+' on the breakout candle',sys2?'close beyond the 55-candle channel':(dn?'above':'below')+' the 55-candle midpoint'],
+          exit:'stop '+pf(inval)+' (2 N from the breakout close); no fixed target — trail the exit: close '+(dn?'below':'above')+' the '+nx+'-candle '+(dn?'low':'high')+' (now '+pf(exL)+'); stand aside if price closes back inside the channel '+(dn?'below ':'above ')+pf(b.lvl),
+          system:sys2?2:1,N,exitLvl:exL}}));
+  }
+}
+
+/* ================= E64 Dow theory ================= */
+/* the direction of a market's swing sequence from its confirmed pivots (>= 2 swing highs and 2 swing lows): +1 higher highs and higher lows, −1 lower highs and lower lows, else 0 */
+function _swingDir(piv){
+  const H=piv.filter(p=>p.t==='H').slice(-2), L=piv.filter(p=>p.t==='L').slice(-2); if(H.length<2||L.length<2) return 0;
+  return H[1].p>H[0].p&&L[1].p>L[0].p?1:H[1].p<H[0].p&&L[1].p<L[0].p?-1:0;
+}
+/* the BTC reference's swing direction known at the BTC candle that matches coin candle t (null when there is no reference / no matching candle) */
+function _btcDir(F,t,o){
+  const R=o&&(o.btcRef||o.smtRef); if(!R||!R.c||!R.idx) return null; const ti=R.idx.get(F.c[t].time); if(ti==null) return null;
+  if(!R._pv) R._pv=fractals(R.c,F.opt.ksw).sort((x,y)=>x.ci-y.ci||x.i-y.i);
+  const seq=_pivSeqOf(R._pv.filter(p=>p.ci<=ti)); return _swingDir(seq);
+}
+/* alternating swing sequence from a pivot list (the more extreme of consecutive same-side pivots wins) */
+function _pivSeqOf(list){ const out=[]; for(const p of list){ const L=out[out.length-1]; if(L&&L.t===p.t){ if(p.t==='H'?p.p>L.p:p.p<L.p) out[out.length-1]=p; } else out.push(p); } return out; }
+/* the Dow pattern ending at the reaction swing S[k] (d>0: L2 of  L0 H0 L1 H1 L2; d<0 mirrored).  Returns the measured pattern or null */
+function _dowPattern(F,S,k,d){
+  if(k<4) return null; const side=d>0?'L':'H', R=S[k], E1=S[k-1], B1=S[k-2], E0=S[k-3], B0=S[k-4]; if(R.t!==side) return null;
+  const a=F.atr[E1.i]; if(!(a>0)) return null;
+  const up=d>0, trend=up?(B1.p>B0.p&&E1.p>E0.p):(B1.p<B0.p&&E1.p<E0.p); if(!trend) return null;
+  const leg=Math.abs(E1.p-B1.p); if(leg<2*a) return null;
+  const hold=up?R.p>B1.p:R.p<B1.p, ret=Math.abs(E1.p-R.p)/leg; if(!hold||ret<.33||ret>.66) return null;
+  return {B0,E0,B1,E1,R,leg,ret,a,third:k>=6&&(up?(S[k-6].p<B0.p&&S[k-5].p<E0.p):(S[k-6].p>B0.p&&S[k-5].p>E0.p))};
+}
+function dDow(F,t,out,o){
+  if(t<60||!F.piv) return; const S=_pivSeq(F,t); if(S.length<5) return; const aT=F.atr[t], px=F.C[t]; if(!(aT>0)) return;
+  for(const d of [1,-1]){
+    const up=d>0; let P=null,k=S.length-1,jb=-1;
+    for(;k>=4&&k>=S.length-4;k--){
+      if(S[k].t!==(up?'L':'H')) continue; const pat=_dowPattern(F,S,k,d); if(!pat) continue; const R=pat.R, lvl=pat.E1.p;
+      if(t-R.i>60) break;
+      let ok=true,j=-1; for(let x=R.i+1;x<=t;x++){ if(up?F.L[x]<R.p:F.H[x]>R.p){ ok=false; break; } if(j<0&&(up?F.C[x]>lvl:F.C[x]<lvl)) j=x; }
+      if(!ok||j<0||t-j>3) continue; P=pat; jb=j; break;
+    }
+    if(!P) continue;
+    const {E1,B1,R,leg,ret}=P, lvl=E1.p, aj=F.atr[jb], inval=up?R.p-.25*F.atr[R.i]:R.p+.25*F.atr[R.i];
+    if(up?px<lvl-.2*aT:px>lvl+.2*aT) continue; if(Math.abs(px-lvl)>1.2*aT&&(up?px>lvl:px<lvl)) continue;          /* back below the broken extreme / already extended */
+    const risk=Math.abs(px-inval); if(!(up?px>inval:px<inval)||risk>4*aT) continue;
+    const T=_ictTargets(F,t,d,px,risk,jb); let list=T.list.slice(); const proj=R.p+(up?leg:-leg);
+    if(up?proj>px+1.2*aT:proj<px-1.2*aT) list.push({p:proj,kind:'projection',dd:Math.abs(proj-px)});
+    list.sort((x,y)=>x.dd-y.dd); const u=[]; list.forEach(x=>{ if(u.every(y=>Math.abs(y.p-x.p)>.5*aT)) u.push(x); }); list=u.slice(0,3);
+    const vp=_avg(F.V,Math.min(B1.i,E1.i),Math.max(B1.i,E1.i)), vr=_avg(F.V,Math.min(E1.i,R.i),Math.max(E1.i,R.i)), volOk=vp>vr*1.1;
+    const bd=_btcDir(F,t,o), conf=bd==null?0:(bd===d?1:-1), cpj=F.H[jb]>F.L[jb]?(F.C[jb]-F.L[jb])/(F.H[jb]-F.L[jb]):.5, dist=Math.abs(F.C[jb]-lvl)/aj;
+    const s=.5+(P.third?.03:0)+(ret>=.38&&ret<=.62?.02:0)+(dist>=.25?.03:0)+(F.rv[jb]>=1.3?.03:0)+(up?cpj>=.65:cpj<=.35)*.02+(volOk?.04:-.02)+(conf>0?.05:conf<0?-.1:0)-.02*(t-jb);
+    const zLo=up?lvl-.1*aj:lvl-Math.min(.6*aj,Math.max(.3*aj,lvl-F.C[jb])), zHi=up?lvl+Math.min(.6*aj,Math.max(.3*aj,F.C[jb]-lvl)):lvl+.1*aj;          /* the zone around the broken extreme, up to the breakout close */
+    const btcTxt=conf>0?'BTC, the second "average", confirms: '+(up?'higher highs and higher lows':'lower highs and lower lows'):conf<0?'BTC does NOT confirm (its swing sequence is '+(bd===0?'mixed':up?'falling':'rising')+') — reported with lower strength':'BTC (the second "average") is not available — the move is not confirmed by a second market';
+    out.push(_hit('E64','Dow: trend resumption after a 33–66% secondary reaction',d,s,['Primary '+(up?'uptrend':'downtrend')+': '+(up?'higher high '+pf(E1.p)+' above '+pf(P.E0.p)+' and higher low '+pf(B1.p)+' above '+pf(P.B0.p):'lower low '+pf(E1.p)+' below '+pf(P.E0.p)+' and lower high '+pf(B1.p)+' below '+pf(P.B0.p))+'; primary leg '+(leg/P.a).toFixed(1)+' ATR',
+        'Secondary reaction to '+pf(R.p)+' retraced '+Math.round(ret*100)+'% of the leg and held the prior swing '+(up?'low':'high')+' '+pf(B1.p)+'; resumption: a close '+pf(F.C[jb])+' beyond the last swing '+(up?'high':'low')+' '+pf(lvl)+' ('+(t-jb)+' candle'+(t-jb===1?'':'s')+' ago)',btcTxt],
+      {inval,tgt:list.length?list.map(x=>x.p):null,entry:[zLo,zHi],age:t-jb,lvl,
+        meta:{model:'Dow trend resumption ('+(up?'uptrend':'downtrend')+')',expect:'after a secondary reaction that held the prior swing, the primary trend is expected to resume and travel at least as far as the previous leg ('+pf(proj)+')',
+          checks:['primary '+(up?'higher highs + higher lows':'lower highs + lower lows'),'secondary reaction '+Math.round(ret*100)+'% (33–66%) that held the prior swing','close beyond the last swing '+(up?'high':'low'),volOk?'volume expanded on the primary leg and contracted on the reaction':'volume did not contract on the reaction (weaker)',conf>0?'BTC confirms the trend':conf<0?'BTC does not confirm':'BTC confirmation not available'],
+          exit:'stop '+pf(inval)+' (beyond the secondary-reaction '+(up?'low':'high')+' − 0.25 ATR); '+(list.length?'targets '+_tgtTxt(list):'no target in range — the plan layer uses risk multiples')+'; stand aside if price closes back '+(up?'below ':'above ')+pf(lvl)+' (the resumption fails) or the next swing '+(up?'low':'high')+' undercuts '+pf(R.p),
+          confirmed:conf>0,leg:{b:B1.p,e:E1.p},reaction:R.p,retrace:Math.round(ret*100)/100}}));
+  }
+}
+function _avg(arr,a,b){ let s=0,n=0; for(let j=Math.max(0,a);j<=b;j++){ const v=arr[j]; if(typeof v==='number'&&isFinite(v)){ s+=v; n++; } } return n?s/n:0; }
+
+_DET.push(dVSA,dTurtle,dDow);
+if(typeof module!=='undefined') module.exports={ENGINE_M1,_vsaBar,_vsaClimax,_vsaConfirm,dVSA,_donch,_turtleBreak,_atr20,dTurtle,_swingDir,_btcDir,_pivSeqOf,_dowPattern,dDow,_mxRange,_tgtTxt,_avg};
+
+/* ===== src/engine/adv_m2.js ===== */
+/* ================================================================
+   ORBIT METHODS · BATCH 2 — three methods that need more care in what they claim (pure — no DOM, no network, causal: bar t uses candles <= t only)
+     E19  Market profile (TPO)      30-minute time-price-opportunity profile of each UTC day: the "80 % rule" and single-print tails (excess)
+     E23  Elliott wave              the wave-1 -> wave-2 -> wave-3 entry, tested against the three inviolable rules and the Fibonacci guidelines on confirmed swings
+     E65  Gann                      the 50 % retracement of the last swing with a reaction candle (a supporting signal only: strength is capped)
+   Strength is how cleanly the textbook rule is met — it is NOT a win probability.  None of these three has been validated on crypto data here; their real record is measured per engine on closed signals.
+
+   ---- E19 TPO (cluster PROF: the same time-at-price structure as the volume profile, so the two count as ONE piece of evidence) ----
+   Session = the UTC day (crypto has no opening auction, so this is a convention, not a market fact).  Period = 30 minutes; every period "prints" one TPO at every price tick between its high and low.
+   tick = (median 30-minute range of the previous day) / 6.   POC = the tick with most prints (ties: nearest the middle).   Value area = 70 % of all prints, grown from the POC two ticks at a time on the side that has more (Dalton).
+   Only timeframes <= 30 minutes can build the profile.  The previous day must have >= 40 of its 48 periods.  Initial balance, profile shapes and open types are NOT built (no opening auction in a 24-hour market).
+     80 % RULE   today's open is outside the previous day's value area, then two CONSECUTIVE completed periods close back inside it (accepted).  Textbook expectation: price travels to the other side of the value area.
+                 Reported for <= 3 candles after the second period completes, only while price is still inside the value area, has travelled <= 50 % of it, and no later period closed outside again.
+                 Stop 0.5 ATR beyond the value-area edge that was re-entered; targets POC then the opposite edge; the room to the opposite edge must be >= 1.2 x the risk.  The previous value area must be >= 2 typical periods wide.
+     TAIL        >= 4 consecutive ticks at the day's extreme printed by ONE period only (single prints, "excess": the market rejected that price quickly), tail >= 1.2 ATR long; the NEXT completed period closes back
+                 beyond the tail (accepted) and no candle since has traded back into it.  Stop beyond the tail extreme (-0.25 ATR); targets today's POC / value-area edge.
+
+   ---- E23 Elliott (cluster STRUCT: it reads the same swing structure as Dow and Turtle, so they count as one) ----
+   Candidate count, up version (down mirrored): P0 = swing low that is also the lowest low of the 40 candles before it (the start of a NEW trend), P1 = swing high (wave 1, >= 2.5 ATR, >= 5 candles, efficiency >= 0.4),
+   P2 = swing low (wave 2).  Inviolable rule 1: wave 2 does not go beyond P0 (and no candle since P2 trades below P2).  Fibonacci guideline: wave 2 retraces 38.2 – 78.6 % of wave 1.
+   Entry = the first CLOSE above P1 (the start of wave 3) <= 3 candles ago, closing in the top 40 % of its range, not more than 1.2 ATR beyond P1.  Stop = P2 - 0.25 ATR.
+   Targets = the wave-3 projections from P2: 1.0 x and 1.618 x wave 1 (and the nearest liquidity pools).  Rules 2 and 3 (wave 3 not the shortest, wave 4 not overlapping wave 1) belong to later waves and are not tested here.
+   NOT tested: the five-wave subdivision of wave 1, alternation, channelling.  A count is an interpretation; this engine only reports the textbook geometry when it is fully met.
+
+   ---- E65 Gann (cluster PATT — it is a retracement-level reaction like the harmonic / Fibonacci engine; supporting only: strength capped at 0.58) ----
+   Last confirmed swing leg A -> B (>= 3 ATR, >= 6 candles, B a higher high than the swing high before it; mirrored for shorts).  50 % level = B - 0.5 x leg.  Price has pulled back into the level
+   (low within 0.15 ATR above it) without closing the pullback beyond 61.8 %, and a recent candle (<= 2 candles ago) closed above the level in the trade direction with its close in the top 40 %.  Stop = pullback low - 0.25 ATR.
+   Targets = the swing extreme B and its 1.272 extension.  Time symmetry (pullback duration within 25 % of the advance duration) adds strength.  The 1 x 1 angle and square-of-nine are deliberately NOT built:
+   their price/time scale is a free choice and could not be validated.
+   ================================================================ */
+const ENGINE_M2=[
+ _E(65,'Gann (50% retracement of the last swing)','PATT','signal','partial','candles',['Gann: 50% retracement reaction'],'only the 50 % retracement with a reaction candle (plus swing-time symmetry as a strength bonus); strength is capped as a supporting signal. Angles, squares and time cycles are not built — their scale is a free choice that cannot be validated'),
+];
+ENGINE_M2.forEach(e=>{ ENG_BY[e.id]=e; ENGINE_EXT.push(e); ENGINE_ALL.push(e); });
+
+/* ================= E19 market profile (TPO) ================= */
+const TPO_P=1800;
+/* first index whose time >= `time` */
+function _lb(c,time){ let lo=0,hi=c.length; while(lo<hi){ const m=(lo+hi)>>1; if(c[m].time<time) lo=m+1; else hi=m; } return lo; }
+/* the 30-minute periods of candles [i0, i1] of the UTC day that starts at d0: [{k, o, h, l, c, a, b, done}].  done = the period's 30 minutes had ended by the close of candle i1 */
+function _tpoPer(F,d0,i0,i1){
+  const c=F.c, tf=F.opt.tfSec, out=[]; let cur=null;
+  for(let i=i0;i<=i1;i++){ const k=Math.floor((c[i].time-d0)/TPO_P);
+    if(!cur||cur.k!==k){ cur={k,o:F.O[i],h:F.H[i],l:F.L[i],c:F.C[i],a:i,b:i}; out.push(cur); }
+    else{ if(F.H[i]>cur.h) cur.h=F.H[i]; if(F.L[i]<cur.l) cur.l=F.L[i]; cur.c=F.C[i]; cur.b=i; } }
+  const endT=c[i1].time+tf; out.forEach(p=>{ p.done=d0+(p.k+1)*TPO_P<=endT; }); return out;
+}
+function _median(a){ if(!a.length) return 0; const s=a.slice().sort((x,y)=>x-y), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+/* the TPO profile of a list of periods on a price grid of `tick`: per-tick period lists, POC, 70 % value area.  null when it cannot be built */
+function _tpoProf(per,tick){
+  if(!per.length||!(tick>0)) return null; let lo=Infinity,hi=-Infinity; per.forEach(p=>{ lo=Math.min(lo,Math.floor(p.l/tick)); hi=Math.max(hi,Math.floor(p.h/tick)); });
+  const n=hi-lo+1; if(!(n>=3)||n>3000) return null; const own=[]; for(let i=0;i<n;i++) own.push([]);
+  per.forEach((p,pi)=>{ for(let x=Math.floor(p.l/tick);x<=Math.floor(p.h/tick);x++) own[x-lo].push(pi); });
+  const cnt=own.map(a=>a.length), mid=(n-1)/2; let poc=0,tot=0; for(let i=0;i<n;i++){ tot+=cnt[i]; if(i&&(cnt[i]>cnt[poc]||(cnt[i]===cnt[poc]&&Math.abs(i-mid)<Math.abs(poc-mid)))) poc=i; }
+  let a=poc,b=poc,acc=cnt[poc];
+  while(acc<.7*tot&&(a>0||b<n-1)){
+    const up=(b+1<n?cnt[b+1]:0)+(b+2<n?cnt[b+2]:0), dn=(a>0?cnt[a-1]:0)+(a>1?cnt[a-2]:0);
+    if(b>=n-1||(a>0&&dn>up)){ acc+=dn; a=Math.max(0,a-2); } else { acc+=up; b=Math.min(n-1,b+2); }
+  }
+  return {lo,n,tick,cnt,own,poc:(lo+poc+.5)*tick,vah:(lo+b+1)*tick,val:(lo+a)*tick,tot};
+}
+/* the complete profile of the UTC day starting at d0 (cached; a day is complete once it is in the past).  null unless the day has >= 40 of its 48 periods */
+function _tpoDay(F,d0){
+  const C=F._tpoD||(F._tpoD=new Map()); if(C.has(d0)) return C.get(d0); let res=null;
+  if(F.opt.tfSec<=TPO_P){ const i0=_lb(F.c,d0), i1=_lb(F.c,d0+86400)-1;
+    if(i1>i0){ const per=_tpoPer(F,d0,i0,i1); if(per.length>=40){ const r30=_median(per.map(p=>p.h-p.l)), prof=r30>0?_tpoProf(per,r30/6):null; if(prof) res={per,prof,r30,tick:r30/6}; } } }
+  C.set(d0,res); return res;
+}
+function dTPO(F,t,out){
+  const tf=F.opt.tfSec; if(tf>TPO_P||t<120) return; const a=F.atr[t], px=F.C[t]; if(!(a>0)) return;
+  const c=F.c, tt=c[t].time, d0=Math.floor(tt/86400)*86400, i0=_lb(c,d0); if(i0>t||c[i0].time-d0>=TPO_P) return;
+  const prev=_tpoDay(F,d0-86400); if(!prev) return; const per=_tpoPer(F,d0,i0,t), done=per.filter(p=>p.done); if(done.length<3) return;
+  const P=prev.prof, VAH=P.vah, VAL=P.val, POC=P.poc, open=per[0].o, inVA=x=>x>=VAL&&x<=VAH, ageOf=p=>Math.round((tt+tf-(d0+(p.k+1)*TPO_P))/tf);
+  /* ---- the 80 % rule ---- */
+  const d=open>VAH?-1:open<VAL?1:0;
+  if(d&&VAH-VAL>=2*prev.r30){
+    let m=-1; for(let i=0;i+1<done.length;i++) if(inVA(done[i].c)&&inVA(done[i+1].c)){ m=i; break; }
+    if(m>=0){ const acc=done[m+1], age=ageOf(acc); let ok=age>=0&&age<=3; for(let i=m+2;i<done.length&&ok;i++) if(!inVA(done[i].c)) ok=false;
+      const edge=d<0?VAH:VAL, opp=d<0?VAL:VAH, trav=(d<0?edge-px:px-edge)/(VAH-VAL);
+      if(ok&&inVA(px)&&trav>=-.02&&trav<=.5){
+        const inval=edge-d*.5*a, risk=Math.abs(px-inval), room=Math.abs(opp-px);
+        if(risk>=.5*a&&risk<=4*a&&room>=1.2*risk){
+          const tg=[]; if(d<0?POC<px-.5*a:POC>px+.5*a) tg.push(POC); tg.push(opp);
+          const lo=d<0?px:Math.max(edge,px-.6*a), hi=d<0?Math.min(edge,px+.6*a):px, eLo=Math.min(lo,hi), eHi=Math.max(lo,hi)>eLo?Math.max(lo,hi):eLo+.1*a;
+          const dist=Math.abs(open-edge)/prev.r30, near=(d<0?done[m].c>=POC&&done[m+1].c>=POC:done[m].c<=POC&&done[m+1].c<=POC);
+          const s=.5+(dist>=1?.03:0)+(VAH-VAL>=3*prev.r30?.02:0)+(near?.02:0)+(F.rv[acc.b]>=1.2?.02:0)-.02*age;
+          out.push(_hit('E19','TPO: 80% rule (re-entry into the previous value area)',d,s,[
+            'Previous day\'s value area '+pf(VAL)+' – '+pf(VAH)+' (POC '+pf(POC)+', 70 % of the 30-minute prints); today opened '+(d<0?'above':'below')+' it at '+pf(open),
+            'Two consecutive 30-minute periods closed back inside the value area ('+pf(done[m].c)+', '+pf(acc.c)+') — price was accepted inside; it has travelled '+Math.round(Math.max(0,trav)*100)+'% of the area since',
+            'Textbook "80 % rule": after such acceptance price is expected to travel to the other side of the value area ('+pf(opp)+') — a textbook rule, not a measured probability on this market'],
+            {inval,tgt:tg,entry:[eLo,eHi],age,lvl:edge,
+              meta:{model:'Market profile — 80% rule ('+(d<0?'open above':'open below')+' the previous value area)',expect:'price accepted back inside the previous day\'s value area is expected to rotate through it to the opposite edge ('+pf(opp)+')',
+                checks:['opened '+(d<0?'above':'below')+' the previous value area ('+pf(open)+')','two consecutive 30-minute closes inside the value area','no later period closed outside it again','travelled only '+Math.round(Math.max(0,trav)*100)+'% of the area so far','previous value area >= 2 typical periods wide'],
+                exit:'stop '+pf(inval)+' (0.5 ATR beyond the re-entered value-area edge '+pf(edge)+'); targets '+tg.map(pf).join(' → ')+' (POC, opposite edge); stand aside if a 30-minute period closes back '+(d<0?'above ':'below ')+pf(edge),
+                va:[VAL,VAH],poc:POC,open}}));
+        }
+      }
+    }
+  }
+  /* ---- single-print tails (excess) at today's extreme ---- */
+  const prof=_tpoProf(done,prev.tick); if(!prof||done.length<4) return;
+  for(const dd of [1,-1]){
+    const up=dd>0, n=prof.n; let x=up?0:n-1, run=0; const pi=prof.own[x].length===1?prof.own[x][0]:-1; if(pi<0) continue;
+    while(x>=0&&x<n&&prof.cnt[x]===1&&prof.own[x][0]===pi){ run++; x+=up?1:-1; }
+    if(run<4||run*prof.tick<1.2*a) continue; const tp=done[pi], nx=done[pi+1]; if(!nx) continue;
+    const tailEdge=up?(prof.lo+run)*prof.tick:(prof.lo+n-run)*prof.tick, ext=up?tp.l:tp.h, age=ageOf(nx);
+    if(age<0||age>3||(up?nx.c<tailEdge:nx.c>tailEdge)) continue;
+    let back=false; for(let j=nx.b+1;j<=t;j++) if(up?F.L[j]<=tailEdge:F.H[j]>=tailEdge){ back=true; break; } if(back) continue;                /* price has traded back into the tail: the rejection is no longer intact */
+    if(up?px<tailEdge-.3*a||px-tailEdge>3*a:px>tailEdge+.3*a||tailEdge-px>3*a) continue;
+    const inval=up?ext-.25*a:ext+.25*a, risk=Math.abs(px-inval); if(risk<.5*a||risk>4*a) continue;
+    const tg=[]; [prof.poc,up?prof.vah:prof.val].forEach(g=>{ if((up?g>px+.5*a:g<px-.5*a)&&tg.every(y=>Math.abs(y-g)>.5*a)) tg.push(g); }); tg.sort((u,v)=>Math.abs(u-px)-Math.abs(v-px));
+    if(tg.length&&Math.abs(tg[tg.length-1]-px)<1.5*risk) tg.splice(0,tg.length);
+    const cpn=nx.h>nx.l?(nx.c-nx.l)/(nx.h-nx.l):.5, s=.5+(run>=6?.03:0)+(run>=8?.02:0)+(up?cpn>=.5:cpn<=.5)*.02+(tg.length&&Math.abs(tg[tg.length-1]-px)>=2*risk?.02:0)-.02*age;
+    const eLo=up?Math.min(px,tailEdge):px-.1*a, eHi=up?px+.1*a:Math.max(px,tailEdge);
+    out.push(_hit('E19','TPO: single-print tail (excess) and return',dd,s,[
+      'Single prints at today\'s '+(up?'low':'high')+': '+run+' price ticks ('+pf(Math.min(ext,tailEdge))+' – '+pf(Math.max(ext,tailEdge))+') were traded by only ONE 30-minute period — the market rejected that price quickly (excess)',
+      'The next completed period closed back '+(up?'above':'below')+' the tail at '+pf(nx.c)+' and no candle has traded back into the tail since ('+age+' candle'+(age===1?'':'s')+' after the period ended)',
+      'Textbook reading: a tail marks where the auction ended; price is expected to rotate back to the value of the day ('+(tg.length?tg.map(pf).join(' → '):'POC '+pf(prof.poc))+') — not a measured probability'],
+      {inval,tgt:tg.length?tg:null,entry:[Math.min(eLo,eHi),Math.max(eLo,eHi)>Math.min(eLo,eHi)?Math.max(eLo,eHi):Math.min(eLo,eHi)+.1*a],age,lvl:tailEdge,
+        meta:{model:'Market profile — single-print tail ('+(up?'low':'high')+' excess)',expect:'the single prints show the auction ended at '+pf(ext)+'; price is expected to rotate back toward the day\'s value (POC '+pf(prof.poc)+')',
+          checks:['>= 4 ticks of single prints at the day\'s '+(up?'low':'high')+' ('+run+')','tail >= 1.2 ATR long','the next 30-minute period closed back beyond the tail','no candle has traded back into the tail'],
+          exit:'stop '+pf(inval)+' (beyond the tail extreme '+pf(ext)+' − 0.25 ATR); '+(tg.length?'targets '+tg.map(pf).join(' → ')+' (POC / value-area edge)':'no target far enough — the plan layer uses risk multiples')+'; stand aside if price trades back into the tail ('+pf(tailEdge)+')',
+          tail:run,poc:prof.poc}}));
+  }
+}
+
+/* ================= E23 Elliott wave ================= */
+function dElliott(F,t,out){
+  if(t<60||!F.piv) return; const S=_pivSeq(F,t); if(S.length<4) return; const aT=F.atr[t], px=F.C[t]; if(!(aT>0)) return;
+  for(const d of [1,-1]){
+    const up=d>0; let best=null;
+    for(let q=S.length-1;q>=2&&q>=S.length-3;q--){
+      const P2=S[q], P1=S[q-1], P0=S[q-2]; if(P2.t!==(up?'L':'H')||P1.t!==(up?'H':'L')||P0.t!==P2.t) continue;
+      const a1=F.atr[P1.i]; if(!(a1>0)) continue; const w1=Math.abs(P1.p-P0.p);
+      if(w1<2.5*a1||P1.i-P0.i<5) continue;
+      if((up?_mxRange(F.L,P0.i-40,P0.i,false)<P0.p-1e-9:_mxRange(F.H,P0.i-40,P0.i,true)>P0.p+1e-9)||P0.i<40) continue;                  /* P0 starts a new trend: the extreme of the 40 candles before it */
+      if(up?P2.p<=P0.p:P2.p>=P0.p) continue;                                                                                               /* inviolable rule 1: wave 2 does not retrace 100 % of wave 1 */
+      const r2=Math.abs(P1.p-P2.p)/w1; if(r2<.382||r2>.786) continue;
+      let path=0; for(let j=P0.i+1;j<=P1.i;j++) path+=Math.abs(F.C[j]-F.C[j-1]); const er=path>0?Math.abs(F.C[P1.i]-F.C[P0.i])/path:0; if(er<.4) continue;
+      if(up?_mxRange(F.H,P1.i+1,P2.i,true)>P1.p:_mxRange(F.L,P1.i+1,P2.i,false)<P1.p) continue;                                    /* wave 1's extreme must stand until wave 2 ends */
+      let jb=-1,bad=false; for(let x=P2.i+1;x<=t;x++){ if(up?F.L[x]<P2.p-1e-9:F.H[x]>P2.p+1e-9){ bad=true; break; } if(jb<0&&(up?F.C[x]>P1.p:F.C[x]<P1.p)) jb=x; }
+      if(bad||jb<0||t-jb>3) continue;
+      const rg=F.H[jb]-F.L[jb], cp=rg>0?(F.C[jb]-F.L[jb])/rg:.5; if(up?cp<.6:cp>.4) continue;
+      if(up?px<P1.p-.2*aT||px>P1.p+1.2*aT:px>P1.p+.2*aT||px<P1.p-1.2*aT) continue;
+      const inval=up?P2.p-.25*F.atr[P2.i]:P2.p+.25*F.atr[P2.i], risk=Math.abs(px-inval); if(!(up?px>inval:px<inval)||risk>4*aT||risk<.4*aT) continue;
+      const s=.5+(r2>=.5&&r2<=.618?.04:.02)+(w1>=4*a1?.02:0)+(F.rv[jb]>=1.5?.03:F.rv[jb]>=1.2?.02:0)+(up?cp>=.8:cp<=.2)*.02+(er>=.6?.02:0)-.02*(t-jb);
+      if(!best||s>best.s) best={s,P0,P1,P2,w1,r2,er,jb,inval,risk,a1};
+    }
+    if(!best) continue; const {P0,P1,P2,w1,r2,er,jb,inval,risk}=best, T=_ictTargets(F,t,d,px,risk,jb);
+    const proj=[1,1.618].map(m=>({p:P2.p+(up?1:-1)*m*w1,kind:'projection',dd:Math.abs(P2.p+(up?1:-1)*m*w1-px),m})).filter(x=>up?x.p>px+1.2*aT:x.p<px-1.2*aT);
+    let list=T.list.concat(proj); list.sort((x,y)=>x.dd-y.dd); const u=[]; list.forEach(x=>{ if(u.every(y=>Math.abs(y.p-x.p)>.5*aT)) u.push(x); }); list=u.slice(0,3);
+    const zLo=up?P1.p-.1*aT:P1.p-Math.min(.6*aT,Math.max(.3*aT,P1.p-F.C[jb])), zHi=up?P1.p+Math.min(.6*aT,Math.max(.3*aT,F.C[jb]-P1.p)):P1.p+.1*aT, tp1=P2.p+(up?1:-1)*w1, tp2=P2.p+(up?1:-1)*1.618*w1;
+    out.push(_hit('E23','Elliott: wave-3 entry after a 38–79% wave 2',d,best.s,[
+      'Possible wave 1 from the '+(up?'low ':'high ')+pf(P0.p)+' (the '+(up?'lowest':'highest')+' of the 40 candles before it) to '+pf(P1.p)+': '+(w1/best.a1).toFixed(1)+' ATR, directional (efficiency '+er.toFixed(2)+')',
+      'Wave 2 retraced '+Math.round(r2*100)+'% of wave 1 to '+pf(P2.p)+' without going beyond the start of wave 1 (rule 1) — inside the 38.2–78.6 % guideline',
+      'Wave 3 begins: a close '+pf(F.C[jb])+' beyond the end of wave 1 '+pf(P1.p)+' ('+(t-jb)+' candle'+(t-jb===1?'':'s')+' ago, volume ×'+F.rv[jb].toFixed(1)+') — an interpretation of the structure, not a certainty'],
+      {inval,tgt:list.length?list.map(x=>x.p):null,entry:[Math.min(zLo,zHi),Math.max(zLo,zHi)],age:t-jb,lvl:P1.p,
+        meta:{model:'Elliott wave — wave 3 entry ('+(up?'impulse up':'impulse down')+')',expect:'if the count is right, wave 3 travels at least 1.0 × wave 1 ('+pf(tp1)+') and often 1.618 × ('+pf(tp2)+') from the end of wave 2',
+          checks:['wave 1 starts at the '+(up?'lowest low':'highest high')+' of the previous 40 candles','wave 1 '+(w1/best.a1).toFixed(1)+' ATR, directional (efficiency '+er.toFixed(2)+')','wave 2 retraced '+Math.round(r2*100)+'% (38.2–78.6 %) and stayed beyond the start of wave 1','close beyond the end of wave 1 in the top 40 % of its range'],
+          exit:'stop '+pf(inval)+' (beyond the end of wave 2 '+pf(P2.p)+' − 0.25 ATR: wave 2 may not retrace 100 %); '+(list.length?'targets '+_tgtTxt(list):'no target in range — the plan layer uses risk multiples')+'; stand aside if price closes back '+(up?'below ':'above ')+pf(P1.p)+' (the count fails)',
+          wave1:[P0.p,P1.p],wave2:P2.p,retrace:Math.round(r2*100)/100,subwaves:'not verified'}}));
+  }
+}
+
+/* ================= E65 Gann ================= */
+function dGann(F,t,out){
+  if(t<60||!F.piv) return; const S=_pivSeq(F,t); if(S.length<4) return; const aT=F.atr[t], px=F.C[t]; if(!(aT>0)) return; const k=S.length-1;
+  for(const d of [1,-1]){
+    const up=d>0, B=S[k], A=S[k-1], Hp=S[k-2]; if(B.t!==(up?'H':'L')||A.t!==(up?'L':'H')||!Hp) continue;
+    const aB=F.atr[B.i], leg=Math.abs(B.p-A.p); if(!(aB>0)||leg<3*aB||B.i-A.i<6) continue;
+    if(up?B.p<=Hp.p:B.p>=Hp.p) continue;                                                                                                     /* the leg made a higher high / lower low: the trend it belongs to */
+    const lvl=up?B.p-.5*leg:B.p+.5*leg; let pl=up?Infinity:-Infinity,jl=-1; for(let j=B.i+1;j<=t;j++){ if(up?F.L[j]<pl:F.H[j]>pl){ pl=up?F.L[j]:F.H[j]; jl=j; } }
+    if(jl<0||t-jl>3) continue;
+    if(up?pl>lvl+.15*aT:pl<lvl-.15*aT) continue;                                                                                              /* price has not reached the 50 % level */
+    let deep=false; for(let j=B.i+1;j<=t;j++) if(up?F.C[j]<B.p-.618*leg:F.C[j]>B.p+.618*leg){ deep=true; break; } if(deep) continue;           /* a close beyond 61.8 %: the 50 % level did not hold */
+    let r=-1; for(let j=jl;j<=t;j++){ const rg=F.H[j]-F.L[j], cp=rg>0?(F.C[j]-F.L[j])/rg:.5; if(up?(F.C[j]>F.O[j]&&F.C[j]>lvl&&cp>=.6):(F.C[j]<F.O[j]&&F.C[j]<lvl&&cp<=.4)){ r=j; break; } }
+    if(r<0||t-r>2) continue; if(up?px<lvl:px>lvl) continue; if(Math.abs(px-lvl)>1.5*aT+.0) continue;
+    const inval=up?pl-.25*aT:pl+.25*aT, risk=Math.abs(px-inval); if(!(up?px>inval:px<inval)||risk>3.5*aT||risk<.4*aT) continue;
+    const t1=B.p, t2=B.p+(up?1:-1)*.272*leg; if(Math.abs(t1-px)<1.2*risk) continue;
+    const rg=F.H[r]-F.L[r], cpr=rg>0?(F.C[r]-F.L[r])/rg:.5, wk=up?(Math.min(F.O[r],F.C[r])-F.L[r])/(rg||1):(F.H[r]-Math.max(F.O[r],F.C[r]))/(rg||1);
+    const adv=B.i-A.i, pul=jl-B.i, sym=Math.abs(pul-adv)/adv<=.25;
+    const s=Math.min(.58,.46+(up?cpr>=.75:cpr<=.25)*.03+(wk>=.5?.02:0)+(sym?.03:0)+(F.rv[r]>=1.2?.02:0)+(leg>=5*aB?.02:0)-.02*(t-r));
+    const eLo=up?pl:lvl-.4*aT, eHi=up?lvl+.4*aT:pl; if(!(eHi>eLo)) continue;
+    out.push(_hit('E65','Gann: 50% retracement reaction',d,s,[
+      'Last swing leg '+pf(A.p)+' → '+pf(B.p)+' ('+(leg/aB).toFixed(1)+' ATR, '+adv+' candles, a '+(up?'higher high':'lower low')+'); its 50 % level is '+pf(lvl),
+      'Price pulled back to '+pf(pl)+' ('+pul+' candles) — into the 50 % level, not beyond 61.8 % — and a '+(up?'bullish':'bearish')+' candle ('+(t-r)+' candle'+(t-r===1?'':'s')+' ago) closed '+(up?'above':'below')+' it, closing in the '+(up?'top':'bottom')+' '+Math.round((up?cpr:1-cpr)*100)+'% of its range',
+      'Gann treats the 50 % retracement as the key support / resistance of a swing'+(sym?'; the pullback lasted about as long as the advance (time symmetry)':'')+' — a supporting signal only (strength capped), not validated here'],
+      {inval,tgt:[t1,t2].filter(g=>up?g>px+.3*aT:g<px-.3*aT),entry:[eLo,eHi],age:t-r,lvl,
+        meta:{model:'Gann — 50% retracement of the last swing',expect:'price holding the 50 % level of the last swing is expected to return to the swing extreme '+pf(t1)+' and test its 1.272 extension '+pf(t2),
+          checks:['swing leg '+(leg/aB).toFixed(1)+' ATR making a '+(up?'higher high':'lower low'),'pullback reached the 50 % level '+pf(lvl)+' and never closed beyond 61.8 %','reaction candle closed '+(up?'above':'below')+' the level in the '+(up?'top':'bottom')+' 40 % of its range',sym?'time symmetry: pullback ≈ advance duration':'time symmetry not present'],
+          exit:'stop '+pf(inval)+' (beyond the pullback '+(up?'low ':'high ')+pf(pl)+' − 0.25 ATR); targets '+pf(t1)+' → '+pf(t2)+'; stand aside if a candle closes '+(up?'below ':'above ')+pf(B.p+(up?-1:1)*.618*leg)+' (61.8 %: the level did not hold)',
+          sym,leg:[A.p,B.p],supportOnly:true}}));
+  }
+}
+
+_DET.push(dTPO,dElliott,dGann);
+if(typeof module!=='undefined') module.exports={ENGINE_M2,_lb,_tpoPer,_median,_tpoProf,_tpoDay,dTPO,dElliott,dGann};
+
+/* ===== src/engine/methods.js ===== */
+/* ================================================================
+   THE 50 TRADING METHODS ↔ THE ENGINES (pure — no DOM, no network)
+   The engines are the code; the methods are what a trader recognises.  Every signal names the method it follows, the structure / model inside that method, the prediction that
+   method makes, and where the method puts the stop and the targets.  This table is that map.  Its status is DERIVED from the engine registry (a method is only "built" when an engine
+   that implements it is built) and is honest about the methods that cannot be run from a browser page with free data, and the ones that are about executing an order, not choosing a side.
+   status:  BUILT    an engine raises signals from candles for this method (all of its rules that candles can express)
+            PARTIAL  some of the method's concepts are built; the rest needs data a browser does not have (the note says which)
+            LIVE     built on the live order book / trade tape / futures feeds — it works only on the coins being watched live
+            CONTEXT  used as a gate, a rank or an explanation — it never raises a signal alone
+            EXEC     an order-execution method (how to place an order, not which side) — not a source of signals
+            NA       cannot be done honestly here (no data, or it needs a training environment)
+   ================================================================ */
+const _M=(no,name,theory,eng,models,tpsl,o)=>Object.assign({no,id:'M'+(no<10?'0':'')+no,name,theory,eng,models,tpsl,status:null,note:''},o||{});
+const METHODS=[
+ _M(1,'Inner Circle Trader (ICT)','price is delivered from one pool of liquidity to the next; smart money raids resting orders, shifts structure and trades back into an inefficiency',['E51','E52','E53','E54','E55','E56','E57','E58','E59','E60','E61'],
+   ['liquidity sweep','fair-value gap','order block / breaker / mitigation block','market-structure shift','optimal trade entry','premium / discount','Silver Bullet','2022 model','Unicorn','Judas swing','Turtle Soup','Market Maker model','Power of Three (AMD)','Candle Range Theory'],
+   'stop beyond the structure that fails (the raided extreme or the far edge of the zone); targets = the next unswept liquidity pools in order; the card prints the exit plan',{note:'inverse fair-value gap, balanced price range and breaker reactions live in engine 2. The Venom model (session raid and reversal) has no engine of its own — the Judas swing and Power-of-Three engines cover session raids. One Shot One Kill is a selection discipline, not a pattern: Settings → Signal strictness (Precision) is the nearest thing the engine has'}),
+ _M(2,'Smart Money Concepts (SMC)','institutions leave footprints — structure breaks, order blocks and liquidity grabs — and price returns to them',['E02','E08','E53'],
+   ['break of structure','change of character','order block','liquidity pools (equal highs / lows)','inducement','mitigation'],'stop beyond the order block / the swept swing; targets = the opposite liquidity pool, then the next higher-timeframe level'),
+ _M(3,'Wyckoff method','large operators accumulate and distribute inside ranges; springs, upthrusts and tests mark the turn',['E11'],
+   ['accumulation / distribution range','spring','upthrust','test','sign of strength / weakness','markup / markdown'],'stop beyond the spring / upthrust extreme; targets = the other side of the range, then the range height projected',{note:'phases are read from candles only; the composite-operator tape is not available'}),
+ _M(4,'Volume Spread Analysis (VSA)','the relation of volume to candle spread and close shows who is in control: effort without result means absorption',['E62'],
+   ['selling / buying climax','stopping volume','test (no supply / no demand)','effort vs result','absorption'],'stop beyond the climax extreme; targets = the nearest unswept liquidity',{note:'a climax or absorption candle is reported only after a test, a sign of strength or a close away confirms it (within 3 candles); a lone "no supply / no demand" bar is not a signal'}),
+ _M(5,'Auction Market Theory (AMT)','price searches for fair value; acceptance outside value continues, rejection returns to value',['E03'],
+   ['value area','acceptance / rejection','balance / imbalance','excess'],'stop back inside value; targets = the other edge of value, then the next high-volume node'),
+ _M(6,'Volume Profile trading','volume at price marks where the market agreed on value: POC, value-area edges, high- and low-volume nodes',['E03'],
+   ['point of control','value area high / low','high-volume node','low-volume node (fast travel)'],'stop beyond the node that fails; targets = the next high-volume node / POC'),
+ _M(7,'Market Profile / TPO','time spent at each price builds the day\'s distribution; the initial balance and single prints show who controls the day',['E19'],
+   ['initial balance break','single-print tail (excess)','80 % rule','value migration','POC / value area'],'stop back inside the initial balance / beyond the tail; targets = initial-balance extensions or the POC',{note:'built: the 80 % rule and single-print tails on a UTC-day profile (timeframes up to 30 minutes). Not built: initial balance, value migration, profile shapes and open types — a 24-hour market has no opening auction'}),
+ _M(8,'Order Flow trading','aggressive buyers vs sellers, and whether price responds, show the real pressure',['E01'],
+   ['aggressive buying / selling','imbalance','absorption','delta divergence'],'stop beyond the absorption / imbalance level; targets = nearest liquidity',{status:'PARTIAL',note:'uses the taker-buy volume of every candle; per-price order flow is not available from the free feeds'}),
+ _M(9,'Footprint chart analysis','bid / ask volume at each price in each candle: stacked imbalances, delta, unfinished auctions',['E01'],
+   ['candle delta','imbalance candles'],'stop beyond the imbalance / absorption level; targets = the nearest liquidity (as order flow)',{status:'PARTIAL',note:'a true footprint needs per-price trades inside each candle; only candle-level delta is available'}),
+ _M(10,'Cumulative Volume Delta (CVD)','cumulative aggressive buying minus selling; a divergence from price shows exhaustion or absorption',['E01','E17'],
+   ['CVD divergence','delta trend'],'stop beyond the divergence extreme; targets = nearest liquidity',{status:'PARTIAL',note:'delta comes from the taker-buy volume of candles'}),
+ _M(11,'Depth of Market (DOM)','visible resting liquidity, how it changes, and whether it is pulled',['E09','E16'],
+   ['bid / ask walls','depth imbalance','liquidity pulled'],'stop beyond the wall; targets = the next wall',{status:'LIVE',note:'order-book snapshots exist only for the coins watched live; there is no depth history'}),
+ _M(12,'Tape reading / Time & Sales','executed trades: speed, size and the price response',['E43'],
+   ['large prints','trade speed','absorption on the tape'],'stop beyond the absorption price; targets = nearest liquidity',{status:'LIVE',note:'the trade tape is only read for the coins watched live'}),
+ _M(13,'Supply and Demand zones','price reacts at the base of a strong move; fresh zones are strongest, retests weaken them',['E08'],
+   ['fresh / tested zones','rally-base-rally / drop-base-drop','zone invalidation'],'stop beyond the zone; targets = the next opposite zone / liquidity'),
+ _M(14,'Pure Price Action','candle behaviour — rejection, engulfing, inside bars, momentum — in the context of structure',['E04','E06'],
+   ['pin bar / rejection','engulfing','inside bar break','momentum candle','candle quality check before every signal'],'stop beyond the signal candle / swing; targets = the next swing or level'),
+ _M(15,'Market Structure analysis','higher highs / lows vs lower highs / lows, and the points where structure transitions',['E04','E22','E13'],
+   ['HH / HL / LH / LL','break of structure','change of character','multi-scale structure'],'stop beyond the last protected swing; targets = the next swing / liquidity'),
+ _M(16,'Elliott Wave theory','price moves in five-wave impulses and three-wave corrections',['E23'],
+   ['wave 3','wave 5','ABC correction'],'stop beyond the wave start (the rule that must not break); targets = Fibonacci projections',{note:'built: the wave 1-2-3 entry only (inviolable rule 1 and the 38–79 % guideline on confirmed swings, entry on the first close beyond wave 1). Not tested: wave 5, ABC corrections, the five-wave subdivision, alternation — a count is an interpretation and alternates always exist'}),
+ _M(17,'Harmonic patterns','Gartley, Bat, Butterfly, Crab: Fibonacci ratios that mark a reversal zone',['E24'],
+   ['Gartley','Bat','Butterfly','Crab','potential reversal zone'],'stop beyond point X / the pattern limit; targets = 0.382 / 0.618 retrace of the CD leg',{note:'Gartley, Bat, Butterfly, Crab and AB=CD are detected from confirmed swings at their projected reversal zone; Shark and Cypher are not built. A pattern marks a zone, not a prediction'}),
+ _M(18,'Fibonacci retracement & extension','retracements find entries, extensions find targets, confluence adds weight',['E24','E55','E57'],
+   ['62–79 % optimal trade entry','retracement confluence','extension targets'],'stop beyond the 100 % level; targets = extensions / liquidity'),
+ _M(19,'Gann analysis','price and time are geometrically related: the 50 % level and swing-time symmetry',['E65'],
+   ['50 % retracement','time symmetry'],'stop beyond the swing; targets = the swing extreme',{note:'supporting evidence only (its strength is capped so it cannot lead alone); the 1×1 angle is deliberately left out because its price-time scale is arbitrary'}),
+ _M(20,'Dow Theory','trends have three phases, must be confirmed by a second average, and persist until a reversal signal',['E64','E13'],
+   ['primary trend','secondary reaction','trend resumption','confirmation by BTC'],'stop beyond the secondary-reaction extreme; targets = the next liquidity / equal-leg projection',{note:'BTC is used as the second "average"; the three phases of a trend (accumulation, public participation, excess) are not classified'}),
+ _M(21,'Turtle Trading','systematic channel breakouts, ATR-based risk and trend-following exits',['E63'],
+   ['20-bar breakout (System 1)','55-bar breakout (System 2)','2 N stop','10 / 20-bar channel exit'],'stop 2 N from entry; exit = the opposite 10 / 20-bar channel (a trailing exit)',{note:'the breakout candle must also close in its outer 35 % on at least 1.2× average volume (an addition for precision); the winner / loser filter of System 1 is simplified; position sizing and pyramiding are execution, not signals'}),
+ _M(22,'Trendline & channel trading','trendline breaks and retests, channel edges as dynamic support / resistance',['E05','E38'],
+   ['trendline break / retest','channel edge','regression channel'],'stop beyond the line; targets = the opposite channel edge'),
+ _M(23,'Breakout & Retest','a range break that holds on the retest continues; one that fails traps the breakers',['E07','E31','E44'],
+   ['range break','retest hold','failed breakout','compression → expansion'],'stop back inside the range; targets = the range height projected / liquidity'),
+ _M(24,'Mean Reversion','price that stretches far from its equilibrium tends to return',['E20'],
+   ['z-score stretch','Bollinger / VWAP reversion','exhaustion candle'],'stop beyond the extreme; target = the mean (VWAP / moving average)',{note:'single-asset z-score with an Ornstein-Uhlenbeck half-life, in range regimes only; it is skipped in a trend'}),
+ _M(25,'Momentum trading','strength tends to continue; acceleration confirms it, exhaustion ends it',['E10','E32'],
+   ['relative strength','acceleration','continuation pull-back','exhaustion'],'stop beyond the pull-back low / high; targets = measured move / liquidity'),
+ _M(26,'Statistical arbitrage','relative value between related instruments reverts after a divergence',['E20','E39'],
+   ['spread z-score','beta-adjusted divergence'],'stop at a wider spread; target = spread back to its mean',{status:'PARTIAL',note:'coin-vs-BTC relative value only; true cointegrated baskets are not built'}),
+ _M(27,'Quantitative trading','statistical signals tested systematically: trend state, regime, change points',['E26','E35','E45','E50'],
+   ['state-space trend','change point','Bayesian estimate','risk-adjusted opportunity'],'stop by volatility (ATR) beyond the signal; targets = volatility multiples / liquidity',{note:'built: a Kalman local-trend filter and a CUSUM change-point; hidden Markov models and Bayesian change-points are not built'}),
+ _M(28,'Algorithmic trading','explicit, repeatable rules: signal → gates → plan → order management',['E49'],
+   ['rule-based gates','signal registry (no duplicates)','scale-out and break-even management'],'every stop / target is a rule, never a feeling',{status:'CONTEXT',note:'this is how the whole engine is built; the app does not place orders'}),
+ _M(29,'Machine-learning trading','models trained on features, validated out of sample, monitored for drift',['E36'],
+   ['meta-labelling of closed signals'],'—',{status:'PARTIAL',note:'only meta-labelling on this app\'s own closed signals; no trained price-prediction model (it would need years of data and a training environment)'}),
+ _M(30,'Reinforcement-learning trading','a policy learns by trial in a simulator with costs',[],[],'—',{status:'NA',note:'needs a training environment and months of simulated fills; claiming it from a static web page would be dishonest'}),
+ _M(31,'Market microstructure','spread, depth, tick size and price impact decide what a trade really costs',['E09','E30','E41'],
+   ['spread gate','liquidity tier','price-impact estimate'],'used as a gate: spread, liquidity and manipulation checks decide whether a signal is tradable',{status:'LIVE'}),
+ _M(32,'Liquidity provision & market making','quote both sides, earn the spread, manage inventory',[],[],'—',{status:'NA',note:'a market maker is not a directional signal; ORBIT only uses the spread / depth it sees as a tradability gate'}),
+ _M(33,'Liquidity sweep & stop-run analysis','price runs through resting stops, then reverses',['E02','E53','E54','E57','E58','E61'],
+   ['sweep of equal highs / lows','previous day / week extremes','Turtle Soup','Judas swing','false break'],'stop beyond the swept extreme; targets = the opposite liquidity'),
+ _M(34,'Order-book imbalance','relative bid vs ask depth shows short-horizon pressure',['E16','E41'],['depth imbalance'],'short-horizon; stop beyond the wall',{status:'LIVE'}),
+ _M(35,'Order-Flow Imbalance (OFI)','changes in best-bid / best-ask size predict short-horizon price pressure',['E41'],['OFI','micro-price'],'short-horizon; stop beyond the wall',{status:'LIVE'}),
+ _M(36,'Volume delta & absorption','aggressive volume that does not move price is being absorbed by passive liquidity',['E01','E43','E62'],['absorption','delta divergence','effort vs result'],'stop beyond the absorption extreme; targets = nearest liquidity',{note:'candle-level delta and absorption (taker-buy volume) plus volume-spread absorption candles; per-price delta and iceberg estimation need tick data'}),
+ _M(37,'VWAP trading','VWAP is the intraday benchmark; deviations and anchored VWAPs act as value and support / resistance',['E18'],['VWAP reclaim / reject','anchored VWAP','deviation bands'],'stop on the other side of the VWAP; targets = deviation bands / liquidity'),
+ _M(38,'TWAP execution','slice an order evenly in time to reduce impact',[],[],'—',{status:'EXEC',note:'an execution algorithm — it decides how to place an order, not which side to take; the card shows the notional so you can size and slice yourself'}),
+ _M(39,'Implementation-shortfall trading','execute so as to minimise the cost against the decision price',[],[],'—',{status:'EXEC',note:'an execution benchmark — not a source of signals'}),
+ _M(40,'Volatility-breakout trading','volatility expansion out of a quiet range starts a move',['E31'],['squeeze','range escape','ATR stop'],'stop at the range middle / ATR multiple; targets = range projection'),
+ _M(41,'Volatility regime analysis','low / high-volatility regimes call for different tactics',['E14','E40'],['regime classification','regime transitions'],'regime sets how wide stops and targets are allowed to be',{status:'CONTEXT'}),
+ _M(42,'Multi-timeframe analysis','the higher timeframe sets the bias, the lower one the entry and the invalidation',['E13'],['4h / daily bias gate','HTF levels as targets','HTF conflict block'],'targets use previous day / week / month levels; a signal that fights the 4h AND daily structure is blocked',{status:'CONTEXT'}),
+ _M(43,'Relative strength & intermarket','leaders lead; divergences between related markets show the next move',['E15','E48','E33'],['SMT divergence','relative strength vs BTC','breadth'],'used to confirm or veto the direction',{status:'PARTIAL',note:'BTC / ETH and the scanned coins; no stocks, bonds or FX'}),
+ _M(44,'Pairs trading','trade the spread between two related assets',['E39'],['coin vs BTC spread'],'as statistical arbitrage',{status:'PARTIAL',note:'coin versus BTC only (beta-adjusted residual); cointegrated pairs and correlation breakdown are not built'}),
+ _M(45,'Funding rate & perpetual basis','funding and basis show how crowded and leveraged the positioning is',['E12'],['extreme funding','long / short ratio'],'used to flag crowded trades; not a stop / target method',{status:'LIVE'}),
+ _M(46,'Open interest & liquidation analysis','leverage build-up, position changes and liquidation cascades',['E12','E28'],['OI vs price','liquidation clusters','squeeze risk'],'targets = liquidation clusters (where stops and liquidations rest)',{status:'LIVE'}),
+ _M(47,'On-chain analytics','exchange flows, holder behaviour and supply dynamics',[],[],'—',{status:'NA',note:'no free, keyless, browser-accessible on-chain feed; nothing is invented'}),
+ _M(48,'Cross-exchange arbitrage','price differences between venues after fees, latency and transfers',['E34'],['venue price dislocation'],'—',{status:'PARTIAL',note:'only the price gap between the venues that are watched; real arbitrage needs transfers, fees and latency that a retail page cannot model'}),
+ _M(49,'Event-driven trading','news and scheduled events move markets',['E47'],['volatility / volume shock reaction'],'stop beyond the shock candle; targets = measured move',{status:'PARTIAL',note:'reacts to the volatility burst in candles; there is no news or economic-calendar feed'}),
+ _M(50,'Adaptive ensemble signal modelling','combine independent methods, check for dependency, calibrate and re-weight from results',['E49','E50','E40'],['independent clusters counted once','direction check','measured per-engine record','engine pause on a poor record'],'the final plan is the engine\'s structural stop and its nearest liquidity targets',{status:'CONTEXT'})
+];
+const METH_BY={}; METHODS.forEach(m=>{ METH_BY[m.id]=m; });
+
+/* the methods an engine implements (by engine id) */
+function methodsOfEngine(eid){ return METHODS.filter(m=>m.eng.indexOf(eid)>=0); }
+/* the status of a method: an explicit override, or derived from what the registry says about its engines */
+function methodStatus(m){
+  if(m.status) return m.status; const E=m.eng.map(id=>ENG_BY[id]).filter(Boolean);
+  if(!E.length) return 'NA'; const sig=E.filter(e=>e.kind==='signal'&&e.built!=='none');
+  if(sig.length) return sig.every(e=>e.built==='full')||sig.length>1&&sig.some(e=>e.built==='full')?'BUILT':'PARTIAL';
+  if(E.some(e=>e.kind==='live'&&e.built!=='none')) return 'LIVE'; if(E.some(e=>e.kind==='context'&&e.built!=='none')) return 'CONTEXT'; return 'NA';
+}
+function methodsCoverage(){ const c={BUILT:0,PARTIAL:0,LIVE:0,CONTEXT:0,EXEC:0,NA:0}; METHODS.forEach(m=>{ c[methodStatus(m)]++; }); return c; }
+
+/* ---------------- what a signal says about its method ----------------
+   sig: the signal object (needs sig.eng, sig.engines, sig.plan, sig.dir).  Returns the short, plain statement a trader reads first:
+   {method, model, also:[…], theory, prediction, stop, targets:[…], check} — every part is taken from the engine's own hit; nothing is invented.  */
+/* "stop 98.67 (beyond the raided low); targets …" → "beyond the raided low" */
+function _stopWhy(exit){ const m=/^stop [^(;]*\(([^)]*)\)/.exec(exit||''); return m?m[1]:null; }
+function methodBasis(sig){
+  const e=sig&&sig.eng; if(!e) return null; const m=methodsOfEngine(e.id)[0]||null, meta=e.meta||{}, p=sig.plan||{};
+  /* the other methods that other engines of this signal also fit (same side) */
+  const also=[]; (sig.engines||[]).forEach(h=>{ if(h.id===e.id) return; methodsOfEngine(h.id).forEach(x=>{ if((!m||x.id!==m.id)&&!also.some(a=>a.id===x.id)) also.push({id:x.id,name:x.name,model:h.setup,engine:h.id}); }); });
+  const why=_stopWhy(meta.exit)||String(sig.invalidation||'the level where the idea is wrong').replace(/ \(the level where the idea is wrong\)/,'');
+  return {method:m?m.name:e.name,methodId:m?m.id:null,model:meta.model||e.setup,also:also.slice(0,3),theory:m?m.theory:'',
+    prediction:meta.expect||(sig.mind&&sig.mind.next&&sig.mind.next[0])||null,
+    stop:(fin(p.sl)?pf(p.sl):'—')+' — '+why,targets:(p.tps||[]).map((x,i)=>'TP'+(i+1)+' '+pf(x.p)+' ('+x.r.toFixed(1)+'R · '+(x.src||'target')+')'),tpsl:m?m.tpsl:'',
+    check:(sig.verdict&&sig.verdict.length)?sig.verdict.map(r=>r.name+' '+r.own+' vs '+r.opp+(r.state==='against'?' ✗':r.state==='for'?' ✔':'')).join(' · '):null,
+    exit:meta.exit||null,checks:(meta.checks||[]).slice(0,4)};
+}
+if(typeof module!=='undefined') module.exports={METHODS,METH_BY,methodsOfEngine,methodStatus,methodsCoverage,methodBasis};
+
 /* ===== src/engine/venue_bybit.js ===== */
 /* ================================================================
    BYBIT USDT PERPETUALS — pure data helpers (no network, no DOM).  Documented v5 public-API shapes:
@@ -3194,12 +3748,15 @@ function advOpts(R,ctx,man,px,hc){ return {manip:man?man.risk:null,smt:smtFor(R,
 /* ---------------- signal gating: reject weak / unconfirmed / late setups ---------------- */
 function gateSignal(ev,dir,bars,L,ctx,deep,o){
   o=o||{}; const sc=dir>0?ev.up:ev.dn, S=dir>0?ev.M.up:ev.M.dn, M=ev.M, man=ev.man;
-  const g=[], add=(ok,txt,hard)=>g.push({ok,txt,hard:hard!==false});
+  const g=[], add=(ok,txt,hard)=>g.push({ok,txt,hard:hard!==false}); let verdict=null;
   const eng=deep&&deep.eng?(dir>0?deep.eng.up:deep.eng.dn):null, top=eng?eng.top:null;
   if(o.indep){
     add(!!top&&top.strength>=(o.engMin||.6),top?'Engine '+top.id+' · '+top.setup+' — strength '+Math.round(top.strength*100)+'/100 (need '+Math.round((o.engMin||.6)*100)+'), '+eng.n+' independent cluster'+(eng.n===1?'':'s')+' agree':'No engine reports a setup in this direction');
     if(eng&&eng.conflict) add(false,'A strong engine setup points the other way ('+eng.against[0].id+' · '+eng.against[0].setup+')');
     const od=dir>0?ev.dn:ev.up; add(od.stage<3||od.stage>4,od.stage>=3&&od.stage<=4?'Confirmed '+(dir>0?'selling':'buying')+' momentum is running against this setup':'No confirmed momentum against the setup');
+    /* the second opinion: score BOTH sides from the engines, the institutional confluence and the flow evidence, and the candle the setup sits on */
+    verdict=directionVerdict(ev,deep,dir); add(verdict.ok,verdict.txt);
+    const cq=candleQuality(bars,L,dir); if(cq.txt) add(cq.ok,cq.txt);
   }else{
     add(sc.stage>=3&&sc.stage<=4&&(sc.raw==null||(sc.raw>=3&&sc.raw<=4)),'Stage '+sc.stage+' ('+(dir>0?ENG.stageName:ENG.stageNameDn)[sc.stage]+') — an actionable signal needs confirmation (stage 3 or 4); stages 1-2 are watch alerts only');
     add(sc.score>=(o.minScore||62),'Evidence '+Math.round(sc.score)+'/100 (need '+(o.minScore||62)+')');
@@ -3223,10 +3780,81 @@ function gateSignal(ev,dir,bars,L,ctx,deep,o){
   add(plan.tps[1].r>=(o.minRR||2),'Reward to target 2 is '+plan.tps[1].r.toFixed(1)+'R (need '+(o.minRR||2)+'R)');
   add(plan.room>=.9,plan.room>=.9?'Room to run':'Blocked — '+plan.roomSrc+' is only '+plan.room.toFixed(1)+'R away');
   if(deep&&deep.book){ const sp=deep.book.spread; add(sp<=.5,sp<=.5?'Order-book spread '+sp.toFixed(3)+'%':'Illiquid book: spread '+sp.toFixed(2)+'% — fills would be poor'); }
-  return {ok:g.every(x=>!x.hard||x.ok),gates:g,plan};
+  return {ok:g.every(x=>!x.hard||x.ok),gates:g,plan,verdict};
 }
 
 if(typeof module!=='undefined') module.exports={PRESETS,TIER_RANK,tierName,smtFor,btcRefFor,engineBundle,advOpts,newLatch,latchStep,computeA,manipCheck,scoreSide,stageOf,evaluate,gateSignal,makePlan,FAM_W,FAM_NAME,ENG,fmtMoney,liqPrice};
+
+/* ===== src/engine/mi_verdict.js ===== */
+/* ================================================================
+   THE ENGINE'S OWN CROSS-CHECKS BEFORE A SIGNAL (pure — no DOM, no network)
+   A setup that one method likes can still be the wrong trade when the rest of the picture points the other way.  These checks are the second opinion:
+     directionVerdict   both sides are scored from three independent sources — the engines (confirmed setups only), the institutional confluence (nine concept families) and the
+                        flow / momentum evidence — and a trade is refused when the OTHER side leads.  The result is shown on the card as one short line, instead of a list of lines for both sides.
+     candleQuality      the last finished candle must not be a strong candle against the trade (a big sell candle closing on its low under a long; a big buy candle closing on its high under a short)
+                        and must not be a rejection wick against it.  A pattern is only as good as the candle it sits on.
+     precisionOk        'Precision' mode (Settings, on by default): a signal needs a SECOND independent cluster of engines, or one confirmed ICT-family model with the higher timeframes aligned.
+     thesisStep         (watch) an OPEN signal whose idea has failed or is weakening before the stop is hit is flagged on its card.
+     enginePaused       an engine whose own measured record is clearly poor (>= 40 closed live signals, or >= 100 back-tested ones, with the upper end of the 95 % interval of its win rate below 30 %)
+                        stops raising signals until its record recovers — the app learns from its results instead of repeating a method that does not work on these markets.
+   None of these is a probability of winning; they only remove trades the engine itself can see are weaker than the alternative.
+   ================================================================ */
+const VERDICT_MARGIN={eng:2,adv:5,flow:12};      /* how far the opposite side must lead before that source counts as "against" (points on a 0-100 scale) */
+const PAUSE_MIN={live:40,backtest:100}, PAUSE_BELOW=.30;
+
+/* score both sides from the three sources.  ev: evaluation (ev.up / ev.dn with .score), deep: {eng:{up,dn}, adv:{up,dn}}.  Returns {ok, rows:[{k,name,own,opp,state}], txt} */
+function directionVerdict(ev,deep,dir){
+  const up=dir>0, E=deep&&deep.eng?deep.eng:null, A=deep&&deep.adv?deep.adv:null, rows=[];
+  const R=(k,name,own,opp,margin,known)=>{ if(!known) return; const lead=own-opp; rows.push({k,name,own:Math.round(own),opp:Math.round(opp),state:lead<=-margin?'against':lead>=margin?'for':'even'}); };
+  if(E){ const o=(up?E.up:E.dn), p=(up?E.dn:E.up); R('eng','Engines',o&&o.top?o.top.strength*100:0,p&&p.top?p.top.strength*100:0,VERDICT_MARGIN.eng,true); }
+  if(A&&A.up&&A.dn){ const o=up?A.up:A.dn, p=up?A.dn:A.up; if(fin(o.score)&&fin(p.score)) R('adv','Institutional confluence',o.score,p.score,VERDICT_MARGIN.adv,true); }
+  if(ev&&ev.up&&ev.dn&&fin(ev.up.score)&&fin(ev.dn.score)) R('flow','Flow & momentum',up?ev.up.score:ev.dn.score,up?ev.dn.score:ev.up.score,VERDICT_MARGIN.flow,true);
+  const ag=k=>rows.some(r=>r.k===k&&r.state==='against');
+  const bad=ag('eng')||(ag('adv')&&ag('flow'));
+  const txt=rows.length?rows.map(r=>r.name+' '+r.own+' vs '+r.opp+(r.state==='against'?' ✗':r.state==='for'?' ✔':'')).join(' · '):'no second opinion available';
+  return {ok:!bad,rows,txt:bad?'The evidence leans the other way — '+txt:'Direction check — '+txt};
+}
+
+/* the last FINISHED candle against the trade?  bars/L as given to gateSignal (a flat "current price" pseudo-candle may be the last element) */
+function candleQuality(bars,L,dir){
+  let k=L; const b0=bars[L]; if(b0&&!(b0.v>0)&&b0.h===b0.l&&L>0) k=L-1;
+  if(k<15) return {ok:true,txt:''};
+  let s=0; for(let j=k-13;j<=k;j++){ const c=bars[j], pc=bars[j-1]; s+=Math.max(c.h-c.l,Math.abs(c.h-pc.c),Math.abs(c.l-pc.c)); } const a=s/14, c=bars[k]; if(!(a>0)) return {ok:true,txt:''};
+  const sp=c.h-c.l, body=c.c-c.o, cp=sp>0?(c.c-c.l)/sp:.5, up=dir>0;
+  if(up&&body<=-.8*a&&cp<=.3) return {ok:false,txt:'The last candle is a strong sell candle ('+(Math.abs(body)/a).toFixed(1)+' ATR body, closing on its low) — sellers are still in control'};
+  if(!up&&body>=.8*a&&cp>=.7) return {ok:false,txt:'The last candle is a strong buy candle ('+(body/a).toFixed(1)+' ATR body, closing on its high) — buyers are still in control'};
+  if(sp>=.9*a){ const w=up?(c.h-Math.max(c.o,c.c))/sp:(Math.min(c.o,c.c)-c.l)/sp; if(w>=.6) return {ok:false,txt:'The last candle is a '+(up?'upper':'lower')+'-wick rejection ('+Math.round(w*100)+'% of its range) against a '+(up?'long':'short')+''}; }
+  return {ok:true,txt:'Last candle does not oppose the trade'};
+}
+
+/* Precision mode: >= 2 independent clusters, or one confirmed ICT-family model with the higher timeframes aligned */
+function precisionOk(eg,align){
+  if(!eg||!eg.top) return {ok:false,txt:'no confirmed engine setup'};
+  if(eg.n>=2) return {ok:true,txt:eg.n+' independent engine clusters agree'};
+  const ict=typeof ICT_IDS!=='undefined'&&ICT_IDS.indexOf(eg.top.id)>=0&&(!eg.top.stage||eg.top.stage==='CONFIRMED');
+  if(ict&&eg.top.strength>=.68&&align==='ALIGNED') return {ok:true,txt:'a confirmed '+((eg.top.meta&&eg.top.meta.model)||eg.top.id)+' model with the higher timeframes aligned'};
+  return {ok:false,txt:'only one engine cluster ('+eg.top.id+') and '+(ict?'the higher timeframes are '+String(align||'UNKNOWN').toLowerCase():'it is not a confirmed ICT-family model')+' — Precision mode wants a second independent confirmation'};
+}
+
+/* an engine whose measured record is clearly poor is paused (see the header) */
+function enginePaused(id){
+  const p=typeof ENG_PERF!=='undefined'?ENG_PERF[id]:null; if(!p||!fin(p.hi)) return false;
+  const need=PAUSE_MIN[p.src]; return !!need&&p.n>=need&&p.hi<PAUSE_BELOW;
+}
+/* THESIS WATCH — the idea behind an OPEN signal can fail before the stop is touched.  Two plain, risk-scaled checks on each finished 1-minute close, informational only (it never changes the trade or its statistics):
+     BROKEN  a candle closed back beyond the structural level the engine's idea rests on (hit.lvl: the broken channel / swing, the re-entered value-area edge, the defended zone) by >= 0.25 x risk, before any target was reached
+     WEAK    a candle closed >= 60 % of the way from the entry to the stop, before any target was reached
+   The state only gets worse and is shown on the card, so a discretionary trader can cut early or at least not add.  Returns the new thesis object when the state worsened, otherwise null. */
+function thesisStep(s,bar){
+  const tr=s&&s.trade; if(!tr||tr.state!=='OPEN'||(tr.hit&&tr.hit[0])||!(tr.risk>0)||!bar||!fin(bar.c)) return null;
+  const d=s.dir, risk=tr.risk, cur=(s.thesis&&s.thesis.state)||'OK', rank={OK:0,WEAK:1,BROKEN:2}, lvl=tr.lvl, sl=fin(tr.sl)?tr.sl:tr.stop;
+  const lvlOk=fin(lvl)&&(d>0?lvl<tr.entry-.05*risk:lvl>tr.entry+.05*risk)&&Math.abs(lvl-sl)>.1*risk;                     /* a level on the loss side of the entry and not simply the stop again */
+  const adv=(tr.entry-bar.c)*d; let st='OK',txt='';
+  if(lvlOk&&(lvl-bar.c)*d>=.25*risk){ st='BROKEN'; txt='a candle closed at '+pf(bar.c)+', back beyond '+pf(lvl)+' — the level this idea rests on; the stop ('+pf(sl)+') is still the exit'; }
+  else if(adv>=.6*risk){ st='WEAK'; txt='a candle closed at '+pf(bar.c)+', '+Math.round(adv/risk*100)+'% of the way to the stop and no target reached'; }
+  if(rank[st]<=rank[cur]) return null; s.thesis={state:st,txt,t:bar.t,px:bar.c}; return s.thesis;
+}
+if(typeof module!=='undefined') module.exports={directionVerdict,candleQuality,precisionOk,enginePaused,thesisStep,VERDICT_MARGIN,PAUSE_MIN,PAUSE_BELOW};
 
 /* ===== src/engine/mi_deep.js ===== */
 /* ================================================================
@@ -3631,7 +4259,7 @@ function makeSignal(sym,ev,dir,g,bars,L,ctx,presetKey){
     mode:ENGM?'ENGINE':'MOMENTUM',tf:ENGM?(PRESETS[presetKey].tf||'5m'):'1m',eng:etop?engineSummary(etop):null,engN:eg?eg.n:0,engines:eg?eg.hits.slice(0,6).map(engineSummary):[],
     etype:ENGM?etop.setup:et.etype,etags:ENGM?[etop.setup].concat(et.etags.filter(x=>x!==et.etype&&x!=='Early Entry'&&x!=='Confirmed Entry')).concat(['Engine '+etop.id]):et.etags,sess:sessionOf(bars[L].t+60),regime:regimeOf(ev),grade:ENGM?engGrade(etop.strength,advS&&advS.tier):gradeOf(sc.score,sc.fams),fund:ctx&&fin(ctx.fund)?ctx.fund:null,htfTag:'UNKNOWN',
     plan:{sl:p.sl,tps:p.tps.map(x=>({p:x.p,r:x.r,src:x.src})),entry:p.entry,risk:p.risk,riskPct:p.riskPct,atr:p.atr,liq10:p.liq10,liq25:p.liq25,room:p.room,roomSrc:p.roomSrc},
-    why:lines,against:weak,pen:sc.pen,man:{risk:ev.man.risk,level:ev.man.level,flags:ev.man.flags.map(f=>f.txt)},gates:g.gates.map(x=>({ok:x.ok,txt:x.txt})),known,
+    verdict:g.verdict?g.verdict.rows:null,why:lines,against:weak,pen:sc.pen,man:{risk:ev.man.risk,level:ev.man.level,flags:ev.man.flags.map(f=>f.txt)},gates:g.gates.map(x=>({ok:x.ok,txt:x.txt})),known,
     top:topFamilies(sc,2).map(x=>x.k),cond:BTC_COND(ctx&&ctx.btc15),tier:M.tier,
     facts:{rv5:M.rv5,rv1:M.rv1,acc:M.acc,bs5:S.bs5,dN5:S.dN5,ret5:S.ret5,ret15:S.ret15,ret60:S.ret60,z15:S.z15,s1:M.s1,B:M.B},
     wyckoff:ev.deep&&ev.deep.wyckoff?ev.deep.wyckoff.txt:null,
@@ -3846,6 +4474,7 @@ function _expectFor(top,dir,sig,tf){
   else if(id==='E07'||id==='E32'||id==='E05'||id==='E38') o.push('the trend / breakout is expected to continue '+(up?'higher':'lower')+' after this pause, toward the next level');
   else if(id==='E03'||id==='E11'||id==='E01'||id==='E20'||id==='E24') o.push('the move that just failed is expected to reverse '+(up?'up':'down')+' toward the middle of the range / value area');
   else if(id==='E15'||id==='E39') o.push('this coin is out of line with BTC — the model expects the gap to close');
+  else if(m&&typeof m.expect==='string'&&m.expect) o.push((m.model?m.model+': ':'')+m.expect);                /* the methods batch (E19 E23 E62–E65): each hit states its own textbook expectation */
   else if(top) o.push('the engine expects '+(up?'upside':'downside')+' continuation toward the next level');
   if(p&&p.tps&&p.tps.length){ const t=p.tps; o.push('path: TP1 '+pf(t[0].p)+' ('+t[0].r.toFixed(1)+'R, '+t[0].src+')'+(t[1]?', then TP2 '+pf(t[1].p)+' ('+t[1].r.toFixed(1)+'R)':'')+(t[2]?', then TP3 '+pf(t[2].p)+' ('+t[2].r.toFixed(1)+'R)':'')); }
   return o;
@@ -4326,7 +4955,7 @@ Registry.prototype.add=function(sig,preset){
   sig.id=sig.id||('S'+(++this.seq)+'-'+sig.sym+'-'+sig.t); const ex=this.byId(sig.id); if(ex) return ex;
   sig.preset=preset||sig.preset; this.lastKey[sig.sym+'|'+sig.dir+'|'+(sig.preset||'')]=sig.t;
   sig.trade=newTrade(sig); const tr=sig.trade; tr.score=sig.score; tr.src=sig.src||'live'; tr.preset=sig.preset; tr.tf=sig.tf||presetTf(sig.preset); tr.peer=sig.mind&&sig.mind.peer?sig.mind.peer.state:null; tr.dom=sig.mind&&sig.mind.peer?sig.mind.peer.dom:null; tr.dir=sig.dir; tr.cond=sig.cond; tr.stage=sig.stage; tr.tier=sig.tier; tr.top=sig.top;
-  tr.etype=sig.etype; tr.conv=sig.conv||null; tr.mode=sig.mode||'MOMENTUM'; tr.eng=sig.eng?sig.eng.id:null; tr.engName=sig.eng?sig.eng.name:null; tr.engN=sig.engN||0; tr.htf=sig.htfTag; tr.sess=sig.sess; tr.regime=sig.regime; tr.liq=sig.liqTier||sig.tier; tr.grade=sig.grade;
+  tr.etype=sig.etype; tr.conv=sig.conv||null; tr.mode=sig.mode||'MOMENTUM'; tr.eng=sig.eng?sig.eng.id:null; tr.lvl=sig.eng&&isFinite(sig.eng.lvl)?sig.eng.lvl:null; tr.engName=sig.eng?sig.eng.name:null; tr.engN=sig.engN||0; tr.htf=sig.htfTag; tr.sess=sig.sess; tr.regime=sig.regime; tr.liq=sig.liqTier||sig.tier; tr.grade=sig.grade;
   sig.events=[{t:sig.t,k:'signal',txt:(sig.etype||'Signal')+' generated · '+(sig.dir>0?'LONG':'SHORT')+' · evidence '+Math.round(sig.score)}];
   this.sigs.push(sig); if(this.sigs.length>this.cap) this.sigs.splice(0,this.sigs.length-this.cap); return sig;
 };
@@ -4335,6 +4964,7 @@ Registry.prototype.onBar=function(sym,bar){
       const tr=s.trade, was=tr.state, wasHit=tr.hit.slice(), wasStop=tr.stop; stepTrade(tr,bar);
       const ev=s.events||(s.events=[]), push=(k,txt)=>{ if(ev.length<24) ev.push({t:bar.t,k,txt}); };
       if(was==='PENDING'&&tr.state==='OPEN') push('entry','Entry filled at '+pf(tr.entry)+' (next-candle open)');
+      if(typeof thesisStep==='function'){ const th=thesisStep(s,bar); if(th) push('thesis',(th.state==='BROKEN'?'Idea failed — ':'Idea weakening — ')+th.txt); }
       tr.hit.forEach((h,i)=>{ if(h&&!wasHit[i]) push('tp'+(i+1),'Target '+(i+1)+' reached at '+pf(tr.tps[i])); });
       if(tr.state==='OPEN'&&tr.stop!==wasStop&&was!=='PENDING') push('stop',tr.hit[1]&&tr.trail?'Stop trailed to target 1 ('+pf(tr.stop)+')':'Stop moved to break-even ('+pf(tr.stop)+')');
       if(tr.state==='CLOSED'){ push('closed',(tr.outcome==='MISSED'?'Missed — ':'Closed — ')+tr.exitWhy+(tr.outcome==='MISSED'?'':' · '+sg(tr.R,2)+'R')); closed.push(s); }
@@ -4930,7 +5560,7 @@ async function netStart(){
    Loaded after mi_net.js (it uses MK, NET, jget, fetchBars …) in the same scope as the other engine modules.
    ================================================================ */
 /* acct = account size used for position sizing and as the paper-account start; maxHeat / ddBreaker are ADVISORY thresholds (they warn, they never silently block) */
-const SET={preset:'BALANCED',alertStage:3,sound:true,notify:false,vibrate:true,popMode:'normal',popMs:7000,sens:2,riskPct:1,acct:10000,btSyms:20,btDays:2,htfBlock:true,maxHeat:5,ddBreaker:10,tfs:['1m','3m','5m','15m','30m','1h','4h','12h','1d'],tfTop:150,tf1Top:60,tfsV:3,scalp:'balanced',spotOn:true,spotN:5,spotExtra:[]};
+const SET={preset:'BALANCED',alertStage:3,sound:true,notify:false,vibrate:true,popMode:'normal',popMs:7000,sens:2,riskPct:1,acct:10000,btSyms:20,btDays:2,htfBlock:true,precision:true,maxHeat:5,ddBreaker:10,tfs:['1m','3m','5m','15m','30m','1h','4h','12h','1d'],tfTop:150,tf1Top:60,tfsV:3,scalp:'balanced',spotOn:true,spotN:5,spotExtra:[]};
 applyScalp(SET.scalp);
 const REG=new Registry({cap:800});
 const BT={trades:[],alerts:[],at:0,info:null};
@@ -4958,9 +5588,9 @@ const perfNow=()=>(typeof performance!=='undefined'&&performance.now)?performanc
    base = the win rate of all engines together in the same source, so a model is only ranked down / up when its whole confidence interval lies below / above the overall record. */
 function engPerfRefresh(){
   try{
-    const mk=(T,src)=>{ const out={}, all=perf(T); if(!all.n) return out; ICT_IDS.forEach(id=>{ const p=perf(T.filter(t=>t.eng===id)); if(p.n) out[id]={n:p.n,lo:p.wlo,hi:p.whi,base:all.winRate,src}; }); return out; };
+    const mk=(T,src)=>{ const out={}, all=perf(T); if(!all.n) return out; ENGINE_ALL.forEach(e=>{ if(e.kind!=='signal') return; const p=perf(T.filter(t=>t.eng===e.id)); if(p.n) out[e.id]={n:p.n,lo:p.wlo,hi:p.whi,base:all.winRate,src}; }); return out; };
     const lv=mk(REG.trades('live'),'live'), bt=mk(BT.trades,'backtest'), m={};
-    ICT_IDS.forEach(id=>{ const a=lv[id], b=bt[id]; const pick=(a&&a.n>=ENG_PERF_MIN.live)?a:(b&&b.n>=ENG_PERF_MIN.backtest)?b:(a||b); if(pick) m[id]=pick; });
+    ENGINE_ALL.forEach(e=>{ const id=e.id, a=lv[id], b=bt[id]; const pick=(a&&a.n>=ENG_PERF_MIN.live)?a:(b&&b.n>=ENG_PERF_MIN.backtest)?b:(a||b); if(pick) m[id]=pick; });
     engPerfSet(m);
   }catch(e){}
 }
@@ -4992,7 +5622,7 @@ function engineRadar(maxN){
         if(REG.sigs.some(s=>s.sym===rec.sym&&s.dir===dir&&s.src==='live'&&s.trade&&s.trade.state!=='CLOSED'&&(s.tf||'1m')===id)) return;
         const wait=d.wait.slice(); let st=d.forming?(stg==='INVALIDATED'?'INVALIDATED':'DEVELOPING'):d.ok?'READY':'DEVELOPING';   /* a forming / invalidated ICT setup (stage) is shown for information and can never be READY */
         if(d.ok){ const lt=rec.bars.length?rec.bars[rec.bars.length-1].t+60:now, why=REG.why(rec.sym,dir,TFSIG.key[id],lt); if(why==='duplicate') return; if(why){ st='DEVELOPING'; wait.push(why==='cooldown'?'the same '+id+' signal was issued a short while ago (cool-down)':'an opposite-side '+id+' signal on this coin is still open'); } else { const sp=SUPP.find(x=>x.sym===rec.sym&&x.dir===dir&&now-x.t<tfShowFor(id)&&x.why.indexOf(id)>=0); if(sp){ st='DEVELOPING'; wait.push(sp.why); } } }
-        const mt=d.top.meta||{}; out.push({tf:id,sym:rec.sym,dir,id:d.top.id,name:d.top.name,setup:d.top.setup,strength:d.top.strength,n:d.n,age,inval:d.top.inval,status:st,stage:stg,model:mt.model||null,entry:d.top.entry||null,tgt:d.top.tgt||null,exit:mt.exit||null,fit:mt.fit||null,wait:wait.slice(0,3),ev:(d.top.evidence||[])[0]||''});
+        const mt=d.top.meta||{}; out.push({tf:id,sym:rec.sym,dir,id:d.top.id,name:d.top.name,setup:d.top.setup,strength:d.top.strength,n:d.n,age,inval:d.top.inval,status:st,stage:stg,meth:(methodsOfEngine(d.top.id)[0]||{}).name||null,model:mt.model||null,entry:d.top.entry||null,tgt:d.top.tgt||null,exit:mt.exit||null,fit:mt.fit||null,wait:wait.slice(0,3),ev:(d.top.evidence||[])[0]||''});
       });
     });
   });
@@ -5092,7 +5722,11 @@ function tryConfirmTf(rec,dir,id,sc,again){
   const sig=makeSignal(rec.sym,Object.assign({},sc.ev,{deep}),dir,g,bars,L,ctx,pk); sig.src='live'; sig.venue=rec.venue; sig.exch=rec.venue==='B'?'BYBIT':'BINANCE'; if(rec.noFlow) sig.noFlow=true; sig.htfTag=hc.align; sig.htf=hc; sig.tfT=sc.t;
   if(fa){ sig.adv=advSummary(fa); sig.conv=fa.tier; }
   if(hc.align==='MIXED'||hc.align==='UNKNOWN') sig.gates.push({ok:hc.align==='MIXED',txt:hc.align==='UNKNOWN'?'Higher-timeframe data was not available — the signal is based on the '+id+' engines only':'Higher timeframes: '+hc.txt});
+  /* Precision mode: one engine cluster alone is not enough — a second independent confirmation, or a confirmed ICT-family model with the higher timeframes aligned */
+  if(SET.precision!==false){ const pc=precisionOk(sc.deep&&sc.deep.eng?(dir>0?sc.deep.eng.up:sc.deep.eng.dn):null,hc.align); if(!pc.ok){ DIAG.precBlock=(DIAG.precBlock||0)+1; tfWhy(id,'precision mode: needs a second confirmation'); suppress(rec,dir,fake,id+' — '+pc.txt); return; } sig.precision=pc.txt; }
   sig.mind=buildMind(rec,dir,id,deep,d.top,sig,hc);
+  /* the market leader (BTC) moving hard against the trade is a reason to wait, whatever the setup says */
+  if(SET.precision!==false&&sig.mind&&sig.mind.peer&&sig.mind.peer.state==='AGAINST'&&rec.sym!=='BTCUSDT'){ DIAG.leadBlock=(DIAG.leadBlock||0)+1; tfWhy(id,'the market leader moves against the trade'); suppress(rec,dir,fake,id+' — BTC is moving against this '+(dir>0?'long':'short')+' right now'); return; }
   { const gg=engGradeFull(sig); sig.grade=gg.grade; sig.gradeWhy=gg.parts; }
   DIAG.tfIssued++; tfWhyBox(id).issued++; emitSignal(sig,rec);
 }
@@ -5584,7 +6218,7 @@ function renderOpps(){
 /* the extra lines of an ICT-model radar row: entry zone, stop, targets, why the model qualifies and the market it was read in (all taken from the engine's own evidence; nothing is computed here).
    The full exit plan and the models ruled out for now are shown on the signal itself once it is confirmed. */
 function radarDetail(x){
-  const f=x.fit, ln=[];
+  const f=x.fit, ln=[]; if(x.meth) ln.push('<b>Method</b> '+esc(x.meth)+(x.model?' · '+esc(x.model):''));
   if(x.entry&&x.entry.length>1) ln.push('<b>Entry</b> '+pf(x.entry[0])+' – '+pf(x.entry[1])+(x.inval?' · <b>Stop</b> '+pf(x.inval):'')+(x.tgt&&x.tgt.length?' · <b>Targets</b> '+x.tgt.map(pf).join(' → '):''));
   else if(x.model&&x.inval) ln.push('<b>Stop</b> '+pf(x.inval)+(x.tgt&&x.tgt.length?' · <b>Targets</b> '+x.tgt.map(pf).join(' → '):''));
   if(f){ if(f.why&&f.why.length) ln.push('<b>Why this model</b> '+f.why.map(esc).join(' · ')); if(f.market&&f.market.length) ln.push('<b>Market</b> '+f.market.map(esc).join(' · ')); if(f.also&&f.also.length) ln.push('<b>Also fits</b> '+f.also.map(esc).join(', ')); }
@@ -5689,6 +6323,13 @@ function advBlock(s){
   }
   return h;
 }
+/* what the signal says about its METHOD: which of the 50 methods, which structure inside it, what it predicts, why the stop and the targets sit where they do, and the direction check */
+function methodBlock(s){
+  const b=methodBasis(s); if(!b) return '';
+  const row=(k,v)=>v?'<div class="mrow"><span>'+k+'</span><div>'+v+'</div></div>':'';
+  return '<div class="method">'+row('METHOD','<b>'+esc(b.method)+'</b> · '+esc(b.model)+(b.also.length?' <span class="mut">· also fits '+b.also.map(a=>esc(a.name)).join(', ')+'</span>':''))+
+    row('WHY',b.checks.length?b.checks.map(esc).join(' · '):'')+row('PREDICTION',b.prediction?esc(b.prediction):'')+row('STOP',esc(b.stop))+row('TARGETS',b.targets.map(esc).join(' · '))+row('CHECK',b.check?esc(b.check):'')+'</div>';
+}
 function sigCard(s){
   const r=MK.syms.get(s.sym)||{sym:s.sym,base:s.sym}, L=s.dir>0, p=s.plan, t=s.trade, lr=liveR(s,r), test=s.src==='test', f=s.facts||{}, sz=sizeOf(s);
   const ex=r.ev&&!test?(L?r.ev.up.stage===5:r.ev.dn.stage===5):false, fresh=UI.arrived[s.id]&&Date.now()-UI.arrived[s.id]<6000, px=r.last||s.px;
@@ -5702,9 +6343,11 @@ function sigCard(s){
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+(s.regime&&s.regime!=='UNKNOWN'?'<span class="badge regime">'+esc(s.regime.replace('_',' '))+'</span>':'')+(s.sess?'<span class="badge regime">'+esc(s.sess)+'</span>':'')+'<span class="badge htf-'+esc(s.htfTag||'UNKNOWN')+'">HTF '+esc(s.htfTag||'UNKNOWN')+'</span>'+(s.tier?'<span class="badge tier-C">'+esc(tierTxt(s.tier))+' liquidity</span>':'')+'</div>'+
     (test?'':htfRow(s))+
     (ex?'<div class="warn" style="margin:0">⚠ The engine now reads this move as EXHAUSTED — consider taking profit / do not add.</div>':'')+
+    (s.thesis&&s.thesis.state!=='OK'&&t.state==='OPEN'&&!t.hit[0]?'<div class="warn" style="margin:0">⚠ '+(s.thesis.state==='BROKEN'?'The idea has failed':'The idea is weakening')+' — '+esc(s.thesis.txt)+'</div>':'')+
     (test?'':'<div class="meters"><div class="meter"><label>'+(s.mode==='ENGINE'?'Engine strength · clusters':'Evidence · families')+'</label><b>'+Math.round(s.score)+' · '+s.fams+'</b><div class="bar '+(L?'':'dnb')+'"><i style="width:'+Math.round(s.score)+'%"></i></div></div><div class="meter"><label>Volume vs normal</label><b>×'+(f.rv5||0).toFixed(1)+'</b><div class="bar '+(L?'':'dnb')+'"><i style="width:'+Math.round(clip((f.rv5||0)/6,0,1)*100)+'%"></i></div></div><div class="meter"><label>Aggressive '+(L?'buys':'sells')+'</label><b>'+Math.round((f.bs5||.5)*100)+'%</b><div class="bar '+(L?'':'dnb')+'"><i style="width:'+Math.round((f.bs5||.5)*100)+'%"></i></div></div></div>')+
     '<div class="levels"><div class="level"><label>Entry zone</label><b>'+pf(p.entry.lo)+'–'+pf(p.entry.hi)+'</b></div><div class="level sl"><label>Stop ('+p.riskPct.toFixed(2)+'%)</label><b class="dn">'+pf(p.sl)+'</b></div><div class="level"><label>R:R (TP2)</label><b>1 : '+p.tps[1].r.toFixed(1)+'</b></div>'+tp+'</div>'+
     '<div class="size-line">Size at <b>'+SET.riskPct+'%</b> risk of <b>'+money(SET.acct)+'</b> = <b>'+money(sz.risk)+'</b> → qty <b>'+qtyTxt(sz.qty)+'</b> · notional <b>'+money(sz.notional)+'</b> ('+sz.lev.toFixed(2)+'× account) · est. liquidation 10× '+pf(p.liq10)+'</div>'+
+    (test?'':methodBlock(s))+
     '<div class="trade-strip"><span class="lc-pill '+(({DEVELOPING:'dev',DETECTED:'det'})[(lifecycleOf(s)||{}).status]||'')+'">'+esc(lcText(lifecycleOf(s)))+'</span><span>'+state+'</span>'+(t.entry?'<span class="mut">filled '+pf(t.entry)+'</span>':'')+(Rv!=null?'<span class="R '+(Rv>=0?'pos':'neg')+'">'+(Rv>=0?'+':'')+Rv.toFixed(2)+'R</span>':'')+'</div>'+
     '<div style="font-size:12.5px">Confidence: '+confText(s)+'</div>'+
     '<div class="footer-reasons">'+(why?'<ul>'+why+'</ul>':'')+(ev.length?'<div class="mut" style="font:11.5px var(--mono);margin-top:6px">Last: '+esc(ev[ev.length-1].txt)+'</div>':'')+'</div>'+
@@ -5744,7 +6387,7 @@ function renderSystem(){
   setHTML('pipeBox','<div class="tw"><table class="t"><tr><th>Stage of the pipeline (since this page was opened)</th><th>Count</th><th>Meaning</th></tr>'+
     row('Candle evaluations',D.evals.toLocaleString(),'every closed 1-minute candle of every analysed market')+row('Coin-sides at stage 3–4',D.s34,'the engine sees confirmation (stage 1–2 are watch alerts only)')+row('Passed every preset gate',D.gate,'evidence, families, manipulation, liquidity, lateness, stop, R:R, room')+
     row('… duplicate of an open signal',D.dup,'same coin + side already open — not issued again')+row('… inside the cooldown',D.cool,'the same coin + side was signalled less than an hour ago')+row('… opposite side already open',D.conflict,'conflicting signals are never issued (listed below)')+
-    row('… waited for higher-timeframe data',D.htfDefer,'the 15m–1M candles are downloaded for candidates before a signal is issued')+row('… blocked by a higher-timeframe conflict',D.htfBlock,SET.htfBlock?'4h and daily structure both oppose the trade (listed below)':'policy is OFF — conflicts are issued but tagged')+row('… scanner switched off',D.paused,'listed below')+
+    row('… waited for higher-timeframe data',D.htfDefer,'the 15m–1M candles are downloaded for candidates before a signal is issued')+row('… blocked by a higher-timeframe conflict',D.htfBlock,SET.htfBlock?'4h and daily structure both oppose the trade (listed below)':'policy is OFF — conflicts are issued but tagged')+row('… held back by Precision mode',D.precBlock||0,SET.precision!==false?'a single engine cluster with no second confirmation':'Standard mode — one confirmed method is enough')+row('… held back: BTC moving against the trade',D.leadBlock||0,'the market leader is moving against this side right now')+row('… scanner switched off',D.paused,'listed below')+
     row('<b>Signals issued</b>','<b>'+D.issued+'</b>','each one is a card, a feed record, a tracked trade and a statistic')+'</table></div>'+tfFunnelHtml()+
     '<h4 class="mut" style="margin:14px 0 6px">Feed audit</h4><div class="note">'+(fa.ok?'<b class="up">✔ consistent</b> · ':'<b class="dn">⚠ inconsistent</b> · ')+fa.n+' signals stored, '+fa.active+' active, '+fa.dups.length+' duplicate ids, '+fa.noEvent.length+' without creation event, '+fa.noClose.length+' closed without closing event, '+fa.dupAct.length+' duplicate active, '+fa.conflicts.length+' conflicting, cards on screen '+(fa.ui?fa.ui.shown+' / expected '+fa.ui.expected:'not rendered yet')+'.</div>'+
     '<h4 class="mut" style="margin:14px 0 6px">Setups that passed the gates but were deliberately not issued</h4>'+(SUPP.length?'<div class="tw"><table class="t"><tr><th>Time</th><th>Coin</th><th>Side</th><th>Evidence</th><th>Reason</th></tr>'+SUPP.slice(0,25).map(x=>'<tr><td class="mut">'+dhm(x.t)+'</td><td>'+esc(x.sym.replace(/USDT$/,''))+'</td><td class="'+(x.dir>0?'up':'dn')+'">'+(x.dir>0?'LONG':'SHORT')+'</td><td>'+x.score+'</td><td>'+esc(x.why)+(x.n>1?' <span class="mut">(×'+x.n+')</span>':'')+'</td></tr>').join('')+'</table></div>':'<div class="note">None so far.</div>'));
@@ -5769,6 +6412,7 @@ function renderSettings(){
     '<label class="note">Spot Outlook (investment view of the major coins, daily candles, runs in the background)</label>'+o('spotOn',[['true','On'],['false','Off']])+'<div style="height:6px"></div>'+o('spotN',[[3,'3 coins — BTC, ETH, SOL'],[5,'5 coins — BTC, ETH, SOL + 2 most-traded'],[8,'8 coins'],[12,'12 coins']])+
     '<label class="note">Account size (USD) — position sizing &amp; paper account</label><input class="ctl" type="number" min="100" step="100" data-set="acct" value="'+SET.acct+'">'+
     '<label class="note">Risk per trade</label>'+o('riskPct',[[.25,'0.25% of account'],[.5,'0.5% of account'],[1,'1% of account'],[2,'2% of account']])+
+    '<label class="note">Signal strictness</label>'+o('precision',[['true','Precision — a second independent confirmation, BTC not against it (fewer, stricter signals)'],['false','Standard — one confirmed method is enough']])+
     '<label class="note">Higher-timeframe conflict policy</label>'+o('htfBlock',[['true','Block signals that fight the 4h AND daily structure'],['false','Issue them, but tag them CONFLICT']])+
     '<label class="note">Advisory limits (they warn — they never block silently)</label>'+o('maxHeat',[[3,'Portfolio heat 3%'],[5,'Portfolio heat 5%'],[8,'Portfolio heat 8%'],[12,'Portfolio heat 12%']])+'<div style="height:6px"></div>'+o('ddBreaker',[[5,'Drawdown breaker 5%'],[10,'Drawdown breaker 10%'],[15,'Drawdown breaker 15%'],[20,'Drawdown breaker 20%']])+
     '<label class="note">Alerts</label>'+o('alertStage',[[0,'Signals only'],[2,'Early watch (stage 2+)'],[3,'Initiation (stage 3+)']])+'<div style="height:6px"></div>'+o('sound',[['true','Sound on'],['false','Sound off']])+'<div style="height:6px"></div>'+o('vibrate',[['true','Vibrate on'],['false','Vibrate off']])+
@@ -6089,7 +6733,7 @@ function tick(){ tickN++; try{ scanLive(); if(tickN%2===0) updateMarket(); rende
 /* ---------------- engines tab: the 50-engine registry with honest status and each engine's MEASURED results ---------------- */
 function renderEngines(){
   const cov=engineCoverage(), L=REG.trades('live').filter(t=>t.eng), B=BT.trades.filter(t=>t.eng), gl=groupPerf(L,t=>t.eng), gb=groupPerf(B,t=>t.eng);
-  $('engWarn').innerHTML='<b>How to read this page.</b> '+cov.total+' engines are registered in the specification, plus <b>'+ENGINE_EXT.length+'</b> ORBIT extension engines (E51 Silver Bullet, E52 Candle Range Theory, E53 Raid→Shift→Retrace, E54 Judas swing, E55 Optimal trade entry, E56 Unicorn, E57 2022 model, E58 Turtle Soup, E59 Mitigation block, E60 Market-maker model, E61 Power of three — listed below, measured like the others; the ICT models show a <i>developing → confirmed → invalidated</i> life-cycle and only a confirmed one can become a signal). <b>'+cov.signal+'</b> of the '+cov.total+' raise signals from candles, <b>'+cov.live+'</b> raise them from live order-book / derivatives / other-venue / trade-tape data (candidates only), <b>'+cov.context+'</b> are context engines (they gate, rank or measure the others) and <b>'+cov.none+'</b> are <u>not built</u> because the data or a validated method is not available here — they are listed, never faked. A hit-rate is shown only from closed signals this app actually produced; a strength score ranks how cleanly a setup is formed, it is <u>not</u> a probability.';
+  $('engWarn').innerHTML='<b>How to read this page.</b> '+cov.total+' engines are registered in the specification, plus <b>'+ENGINE_EXT.length+'</b> ORBIT extension engines (the ICT family E51–E61, plus VSA, Turtle, Dow, TPO, Elliott and Gann — listed below, measured like the others; the ICT models show a <i>developing → confirmed → invalidated</i> life-cycle and only a confirmed one can become a signal). The table at the top maps the <b>50 trading methods</b> to the engines. <b>'+cov.signal+'</b> of the '+cov.total+' raise signals from candles, <b>'+cov.live+'</b> raise them from live order-book / derivatives / other-venue / trade-tape data (candidates only), <b>'+cov.context+'</b> are context engines (they gate, rank or measure the others) and <b>'+cov.none+'</b> are <u>not built</u> because the data or a validated method is not available here — they are listed, never faked. A hit-rate is shown only from closed signals this app actually produced; a strength score ranks how cleanly a setup is formed, it is <u>not</u> a probability.';
   const mcell=(p,tag)=>p&&p.n?fCI(p)+' <span class="mut">n='+p.n+' · avg '+fR(p.avgR)+'</span>':'<span class="mut">'+tag+'</span>';
   const bayes=p=>{ if(!p||p.n<10) return '<span class="mut">needs ≥10</span>'; const b=betaPost(p.wins,p.n); return Math.round(b.mean*100)+'% <span class="mut">['+Math.round(b.lo*100)+'–'+Math.round(b.hi*100)+']</span>'; };
   const stat=e=>e.kind==='none'?'<span class="badge test">NOT BUILT</span>':e.kind==='context'?'<span class="badge regime">CONTEXT</span>':e.kind==='live'?'<span class="badge etype">LIVE DATA</span>':'<span class="badge confirmed">SIGNAL</span>';
@@ -6098,7 +6742,12 @@ function renderEngines(){
     (e.setups.length?'<td>'+mcell(gl[e.id],'no closed live signals')+'</td><td>'+mcell(gb[e.id],'not back-tested')+'</td><td>'+bayes(gl[e.id]&&gl[e.id].n>=(gb[e.id]?gb[e.id].n:0)?gl[e.id]:gb[e.id])+'</td>':'<td colspan="3"><small class="mut">'+(e.kind==='none'?'—':'does not raise signals')+'</small></td>')+
     '<td><small class="mut">'+esc(e.note||'')+'</small></td></tr>';
   const sect=(title,kinds,open)=>{ const D=ENGINE_ALL.filter(e=>kinds.includes(e.kind)); return '<details class="panel" '+(open?'open':'')+'><summary class="ph" style="cursor:pointer"><h2>'+title+'</h2><span class="sub">'+D.length+' engines</span></summary><div class="pb tw"><table class="t"><tr><th>#</th><th>Engine</th><th>Status</th><th>Setup types</th><th>Live result [95% CI]</th><th>Back-test [95% CI]</th><th>Bayesian rate [90%]</th><th>What is missing / how it works</th></tr>'+D.map(row).join('')+'</table></div></details>'; };
-  $('engBody').innerHTML='<div class="grid g4"><div class="metric"><label>Candle engines</label><b>'+cov.signal+'</b><small>raise signals alone</small></div><div class="metric"><label>Live-data engines</label><b>'+cov.live+'</b><small>on candidates</small></div><div class="metric"><label>Context engines</label><b>'+cov.context+'</b><small>gate / rank / measure</small></div><div class="metric"><label>Not built</label><b>'+cov.none+'</b><small>no honest data or method</small></div></div>'+
+  /* the 50 trading methods and the engines behind each (status is derived from the registry — a method is only "built" when an engine for it is) */
+  const MS={BUILT:['built','confirmed'],PARTIAL:['partial','etype'],LIVE:['live data','etype'],CONTEXT:['context','regime'],EXEC:['execution only','test'],NA:['not possible here','test']}, mc=methodsCoverage();
+  const mrow=m=>{ const st=methodStatus(m), b=MS[st]; return '<tr><td class="mono">'+m.id+'</td><td><b>'+esc(m.name)+'</b><br><small class="mut">'+esc(m.theory)+'</small></td><td><span class="badge '+b[1]+'">'+b[0]+'</span></td><td><small>'+(m.models.length?esc(m.models.join(' · ')):'<span class="mut">—</span>')+'</small></td><td><small class="mono">'+(m.eng.length?m.eng.join(' ')+(mEngPerf(m)?'<br>'+mEngPerf(m):''):'—')+'</small></td><td><small>'+esc(m.tpsl)+'</small></td><td><small class="mut">'+esc(m.note||'')+'</small></td></tr>'; };
+  const mEngPerf=m=>{ const n=m.eng.reduce((a,id)=>a+((gl[id]&&gl[id].n)||0),0); return n?'<span class="mut">'+n+' closed live</span>':''; };
+  const methods='<details class="panel" open><summary class="ph" style="cursor:pointer"><h2>THE 50 TRADING METHODS</h2><span class="sub">'+mc.BUILT+' built · '+mc.PARTIAL+' partial · '+mc.LIVE+' live-data · '+mc.CONTEXT+' context · '+mc.EXEC+' execution-only · '+mc.NA+' not possible here</span></summary><div class="pb tw"><div class="note" style="margin-bottom:8px">Every signal names the method it follows, the structure inside it, what it predicts, and why the stop and the targets sit where they do. <b>Built</b> = an engine raises signals for it from candles. <b>Partial / live data</b> = only the part that candles or the live feeds can express. <b>Execution only / not possible here</b> are stated plainly instead of being faked.</div><table class="t"><tr><th>#</th><th>Method</th><th>Status</th><th>Structures &amp; models</th><th>Engines</th><th>Stop &amp; targets</th><th>Limit</th></tr>'+METHODS.map(mrow).join('')+'</table></div></details>';
+  $('engBody').innerHTML=methods+'<div class="grid g4"><div class="metric"><label>Candle engines</label><b>'+cov.signal+'</b><small>raise signals alone</small></div><div class="metric"><label>Live-data engines</label><b>'+cov.live+'</b><small>on candidates</small></div><div class="metric"><label>Context engines</label><b>'+cov.context+'</b><small>gate / rank / measure</small></div><div class="metric"><label>Not built</label><b>'+cov.none+'</b><small>no honest data or method</small></div></div>'+
     sect('SIGNAL ENGINES (CANDLES)',['signal'],true)+sect('LIVE-DATA ENGINES',['live'],false)+sect('CONTEXT ENGINES',['context'],false)+sect('NOT BUILT — AND WHY',['none'],true)+
     '<div class="note">Dependency: engines that read the same underlying event share a cluster ('+Object.keys(ENG_CL).filter(k=>k!=='CTX').map(k=>esc(ENG_CL[k])).join(' · ')+'). A signal\'s "independent clusters" counts each cluster once, so one sweep seen through three lenses is not three confirmations.</div>';
 }
