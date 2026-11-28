@@ -4698,25 +4698,27 @@ if(typeof module!=='undefined') module.exports={engGrade,engGradeFull,advSummary
    and the trade may stay open for a time that fits the timeframe (a 1m idea is not held for a day, a 1h idea is not cut after an hour).
    Nothing here is an estimate of accuracy: the hit rate of each timeframe is measured on the signals it actually issued (Performance tab).
    ================================================================ */
+/* the trade category of each timeframe, and the order the app shows them in (scalps first, the 1-minute scan last).  12h / 1d are position trades: off by default, read only as higher-timeframe context */
+const TF_CAT={'1m':'Scalp','3m':'Scalp','5m':'Scalp','15m':'Scalp','30m':'Intraday','1h':'Intraday','4h':'Intraday','12h':'Position','1d':'Position'};
+const TF_SHOW=['3m','5m','15m','30m','1h','4h','12h','1d','1m'];
 const TFSIG={
-  ids:['1m','3m','5m','15m','30m','1h','4h','12h','1d','3d','1w'],                // timeframes with their own engine scan (the 1-minute MOMENTUM scanner is separate and keeps running)
-  all:['1m','3m','5m','15m','30m','1h','4h','12h','1d','3d','1w'],
-  native:['15m','30m','1h','4h','12h','1d','3d','1w'],                                        // downloaded as real exchange candles (the others are built from the live 1-minute stream)
-  key:{'1m':'ENG1','3m':'ENG3','5m':'ENG5','15m':'ENG15','30m':'ENG30','1h':'ENG1H','4h':'ENG4H','12h':'ENG12H','1d':'ENG1D','3d':'ENG3D','1w':'ENG1W'},   // preset key written on the signal (duplicate / cooldown / statistics are per timeframe)
-  win:{'1m':300,'3m':300,'5m':300,'15m':300,'30m':300,'1h':300,'4h':300,'12h':300,'1d':300,'3d':300,'1w':300},   // candles used for the read
-  need:{'1m':100,'3m':100,'5m':90,'15m':80,'30m':70,'1h':60,'4h':50,'12h':45,'1d':40,'3d':40,'1w':30},    // fewer candles than this: the timeframe is reported as "not enough history", never guessed
-  hold:{'1m':90,'3m':120,'5m':180,'15m':360,'30m':720,'1h':1440,'4h':2880,'12h':5760,'1d':10080,'3d':30240,'1w':60480},   // minutes a trade may stay open before the time exit
-  cool:{'3m':900,'5m':1200,'15m':2700,'30m':5400,'1h':10800,'4h':21600,'12h':43200,'1d':86400,'3d':259200,'1w':604800}, // seconds before the same coin + side can signal again on the same timeframe (1m shares the momentum scanner's)
-  engMin:{'1m':.6,'3m':.6,'5m':.6,'15m':.6,'30m':.6,'1h':.6,'4h':.6,'12h':.6,'1d':.6,'3d':.6,'1w':.6},
+  ids:['1m','3m','5m','15m','30m','1h','4h','12h','1d'],                // timeframes with their own engine scan (the 1-minute MOMENTUM scanner is separate and keeps running)
+  all:['1m','3m','5m','15m','30m','1h','4h','12h','1d'],
+  native:['15m','30m','1h','4h','12h','1d'],                                        // downloaded as real exchange candles (the others are built from the live 1-minute stream)
+  key:{'1m':'ENG1','3m':'ENG3','5m':'ENG5','15m':'ENG15','30m':'ENG30','1h':'ENG1H','4h':'ENG4H','12h':'ENG12H','1d':'ENG1D'},   // preset key written on the signal (duplicate / cooldown / statistics are per timeframe)
+  win:{'1m':300,'3m':300,'5m':300,'15m':300,'30m':300,'1h':300,'4h':300,'12h':300,'1d':300},   // candles used for the read
+  need:{'1m':100,'3m':100,'5m':90,'15m':80,'30m':70,'1h':60,'4h':50,'12h':45,'1d':40},    // fewer candles than this: the timeframe is reported as "not enough history", never guessed
+  hold:{'1m':90,'3m':120,'5m':180,'15m':360,'30m':720,'1h':1440,'4h':2880,'12h':5760,'1d':10080},   // minutes a trade may stay open before the time exit
+  cool:{'3m':900,'5m':1200,'15m':2700,'30m':5400,'1h':10800,'4h':21600,'12h':43200,'1d':86400}, // seconds before the same coin + side can signal again on the same timeframe (1m shares the momentum scanner's)
+  engMin:{'1m':.6,'3m':.6,'5m':.6,'15m':.6,'30m':.6,'1h':.6,'4h':.6,'12h':.6,'1d':.6},
   maxAge:2,                                                              // default; slower timeframes use TFSIG.age
-  age:{'12h':1,'1d':1,'3d':1,'1w':1},                                                  // a 12-hour or daily setup must be on the candle that just closed or the one before it                                                              // the setup must have formed within the last N candles of that timeframe
-  label:{'1m':'1-minute','3m':'3-minute','5m':'5-minute','15m':'15-minute','30m':'30-minute','1h':'1-hour','4h':'4-hour','12h':'12-hour','1d':'daily','3d':'3-day','1w':'weekly'},
-  sec:{'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400,'3d':259200,'1w':604800}
+  age:{'12h':1,'1d':1},                                                  // a 12-hour or daily setup must be on the candle that just closed or the one before it                                                              // the setup must have formed within the last N candles of that timeframe
+  label:{'1m':'1-minute','3m':'3-minute','5m':'5-minute','15m':'15-minute','30m':'30-minute','1h':'1-hour','4h':'4-hour','12h':'12-hour','1d':'daily'},
+  sec:{'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400}
 };
 /* one preset per timeframe: the engine-led rule-set with that timeframe's name on it (they are not offered in the preset picker) */
 /* the longer timeframes ask for more: a higher reward-to-risk at target 2 and their targets look further out (see makePlan 'far') */
-TFSIG.odd=['3d','1w'];                                                                         // timeframes whose candle grid is not aligned to the epoch
-TFSIG.rr={'1m':2,'3m':2,'5m':2,'15m':2.2,'30m':2.4,'1h':2.4,'4h':2.4,'12h':2.4,'1d':2.4,'3d':2.4,'1w':2.4}; TFSIG.far={'1m':false,'3m':false,'5m':false,'15m':true,'30m':true,'1h':true,'4h':true,'12h':true,'1d':true,'3d':true,'1w':true};
+TFSIG.rr={'1m':2,'3m':2,'5m':2,'15m':2.2,'30m':2.4,'1h':2.4,'4h':2.4,'12h':2.4,'1d':2.4}; TFSIG.far={'1m':false,'3m':false,'5m':false,'15m':true,'30m':true,'1h':true,'4h':true,'12h':true,'1d':true};
 TFSIG.ids.forEach(id=>{ PRESETS[TFSIG.key[id]]=Object.assign({},PRESETS.ENGINE,{name:'Engine-led · '+id,tf:id,hidden:true,minRR:TFSIG.rr[id],far:TFSIG.far[id]}); });
 const holdFor=tf=>TFSIG.hold[tf||'1m']||240;
 /* scalp sensitivity: the minimum setup strength on 1m / 3m / 5m / 15m.  Every other gate (risk, room, manipulation, structure, higher timeframe, conviction) stays the same in all three modes. */
@@ -4732,8 +4734,7 @@ function tfBars1m(bars,L,id){ if(id==='1m') return bars.slice(Math.max(0,L-TFSIG
 /* has a candle of this timeframe just closed at 1-minute bar L ?  (t+60 is the end of that minute) */
 const tfClosesAt=(bar,id)=>((bar.t+60)%TFSIG.sec[id])===0;
 /* the last finished native candle's open time that should exist at time nowS (used to decide when to download again) */
-/* 3-day and weekly candles are NOT aligned to the Unix epoch (a Binance week opens on Monday, the 3-day grid is the exchange's own), so for those the grid is taken from a candle already downloaded (anchor = open time of any real candle) */
-const tfLastClosed=(nowS,id,anchor)=>{ const s=TFSIG.sec[id]; if(TFSIG.odd.indexOf(id)>=0&&anchor>0){ const k=Math.floor((nowS-anchor)/s); return anchor+(k-1)*s; } return Math.floor(nowS/s)*s-s; };
+const tfLastClosed=(nowS,id)=>Math.floor(nowS/TFSIG.sec[id])*TFSIG.sec[id]-TFSIG.sec[id];
 
 /* structure / liquidity / zone read of one timeframe in the shape the gates and the plan builder expect */
 function deepForTF(id,candles,bars1m,L,pxNow){
@@ -4846,7 +4847,7 @@ function mindPeers(coin,refs,dir,opt){
 }
 
 /* ---------------- analog: the SAME engine setup on this coin's own loaded history, measured ---------------- */
-const MIND_HZ={'1m':30,'3m':20,'5m':24,'15m':16,'30m':12,'1h':10,'4h':8,'12h':6,'1d':5,'3d':4,'1w':3};          /* candles to wait for the outcome */
+const MIND_HZ={'1m':30,'3m':20,'5m':24,'15m':16,'30m':12,'1h':10,'4h':8,'12h':6,'1d':5};          /* candles to wait for the outcome */
 /* F, t: the features of the timeframe's candles and the last index; top: the engine hit behind the signal; dir: +1 / -1.
    Every earlier bar where the same engine reported the same setup on the same side is replayed forward: did price travel +1.5 ATR in the trade direction before going −1 ATR against it?
    (a candle that touches both counts as a failure — the same rule the tracker uses).  Returns the counts, never a probability promise. */
@@ -6400,15 +6401,15 @@ async function tfTick(){
     /* start-up catch-up: the 3m / 5m candles come from the 1-minute buffer, so a market that has just been loaded is judged once at once (its newest finished candle) instead of waiting for the next candle to close.
        Markets are listed in scan-priority order, so the gainers, volume leaders and movers are first. */
     if(MK.onTf) ranked.forEach(rec=>['3m','5m'].forEach(id=>{ if(!rec.tfT||rec.tfT[id]===undefined) MK.onTf(rec,id); }));
-    ranked.forEach(rec=>ids.forEach(id=>{
-      if(rec.venue==='B'&&!BYBIT_TF[id]) return;                                       /* this venue has no such candle (no 3-day candle on Bybit) */
-      const raw=rec.htfRaw&&rec.htfRaw[id], sec=TFSIG.sec[id], want=tfLastClosed(now,id,raw&&raw.bars&&raw.bars.length?raw.bars[raw.bars.length-1].t:0); if(now<want+sec+2) return;
+    ranked.forEach(rec=>rec.tfRot?0:ids.forEach(id=>{
+      const sec=TFSIG.sec[id], want=tfLastClosed(now,id); if(now<want+sec+2) return;
+      const raw=rec.htfRaw&&rec.htfRaw[id];
       const have=raw&&raw.bars&&raw.bars.length?newestFinished(raw.bars,id,now,raw.s):0;
       const tr=rec.tfTry||(rec.tfTry={}); if(have>=want||Date.now()-(tr[id]||0)<20000) return;
       jobs.push({rec,id}); }));
-    jobs.sort((a,b)=>((a.id==='3d'||a.id==='1w')-(b.id==='3d'||b.id==='1w'))||byPrio(a.rec,b.rec)||((TF_ORDER[a.id]||0)-(TF_ORDER[b.id]||0))); let i=0;   /* the candles of the priority markets are downloaded first, the swing timeframes (3d / 1w) after every faster one */
+    jobs.sort((a,b)=>byPrio(a.rec,b.rec)||((TF_ORDER[a.id]||0)-(TF_ORDER[b.id]||0))); let i=0;                                    /* the candles of the priority markets are downloaded first, the scalp timeframes before the slower ones */
     const worker=async()=>{ while(i<jobs.length){ const j=jobs[i++]; j.rec.tfTry[j.id]=Date.now();
-      try{ if(await fetchTfNative(j.rec,j.id)&&MK.onTf){ const rw=j.rec.htfRaw[j.id], have=newestFinished(rw.bars,j.id,nowSec(),rw.s); if(have>=tfLastClosed(nowSec(),j.id,rw.bars[rw.bars.length-1].t)) MK.onTf(j.rec,j.id); } }catch(e){ j.rec.htfErr=(j.rec.htfErr||0)+1; } } };
+      try{ if(await fetchTfNative(j.rec,j.id)&&MK.onTf){ const rw=j.rec.htfRaw[j.id], have=newestFinished(rw.bars,j.id,nowSec(),rw.s); if(have>=tfLastClosed(nowSec(),j.id)) MK.onTf(j.rec,j.id); } }catch(e){ j.rec.htfErr=(j.rec.htfErr||0)+1; } } };
     await Promise.all(MK.hydrate.running?[worker(),worker()]:[worker(),worker(),worker(),worker()]);        /* two downloads at a time while the 1-minute history of the other markets is still loading */
   }catch(e){}
   tfBusy=false;
@@ -6439,7 +6440,7 @@ async function netStart(){
    Loaded after mi_net.js (it uses MK, NET, jget, fetchBars …) in the same scope as the other engine modules.
    ================================================================ */
 /* acct = account size used for position sizing and as the paper-account start; maxHeat / ddBreaker are ADVISORY thresholds (they warn, they never silently block) */
-const SET={preset:'BALANCED',alertStage:3,sound:true,notify:false,vibrate:true,popMode:'normal',popMs:7000,sens:2,riskPct:1,acct:10000,btSyms:20,btDays:2,htfBlock:true,precision:true,maxHeat:5,ddBreaker:10,tfs:['1m','3m','5m','15m','30m','1h','4h','12h','1d','3d','1w'],tfTop:200,minQ:0,tf1Top:30,gainMore:40,gainFirst:true,flow:'all',alertB:false,tfsV:4,scalp:'balanced',spotOn:true,spotN:5,spotExtra:[]};
+const SET={preset:'BALANCED',alertStage:3,sound:true,notify:false,vibrate:true,popMode:'normal',popMs:7000,sens:2,riskPct:1,acct:10000,btSyms:20,btDays:2,htfBlock:true,precision:true,maxHeat:5,ddBreaker:10,tfs:['1m','3m','5m','15m','30m','1h','4h'],tfTop:200,minQ:0,tf1Top:30,gainMore:40,gainFirst:true,flow:'all',alertB:false,tfsV:5,m1Mode:'elite',tfRot:25,scalp:'balanced',spotOn:true,spotN:5,spotExtra:[]};
 applyScalp(SET.scalp);
 const REG=new Registry({cap:1200});
 const BT={trades:[],alerts:[],at:0,info:null};
@@ -6542,8 +6543,8 @@ function enqTf(rec,id){
   if(!rec||!SET.tfs||SET.tfs.indexOf(id)<0||!rec.tfIn||rec.stale||(id==='1m'&&!rec.tfIn1)) return;
   const k=rec.sym+'|'+id; if(TFQ.has(k)) return; TFQ.set(k,{rec,id}); if(!tfKick){ tfKick=true; setTimeout(pumpTf,0); }
 }
-/* the order in which timeframes are judged when several are waiting: the scalp timeframes (3m / 5m / 15m) first, then intraday (30m … 1d), then swing (3d / 1w); the 1-minute scan always goes last (a 1-minute setup is the least valuable and the heaviest to keep up with) */
-const TF_ORDER={'3m':0,'5m':1,'15m':2,'30m':3,'1h':4,'4h':5,'12h':6,'1d':7,'3d':8,'1w':9,'1m':20};
+/* the order in which timeframes are judged when several are waiting: the scalp timeframes (3m / 5m / 15m) first, then intraday (30m / 1h / 4h), then the position timeframes (12h / 1d, off by default); the 1-minute scan always goes last (a 1-minute setup is the least valuable and the heaviest to keep up with) */
+const TF_ORDER={'3m':0,'5m':1,'15m':2,'30m':3,'1h':4,'4h':5,'12h':6,'1d':7,'1m':20};
 const tfJobOrder=(x,y)=>((x.id==='1m')-(y.id==='1m'))||byPrio(x.rec,y.rec)||((TF_ORDER[x.id]||0)-(TF_ORDER[y.id]||0));
 function pumpTf(){
   const t0=perfNow(), jobs=[...TFQ].sort((x,y)=>tfJobOrder(x[1],y[1]));       /* scan priority: 1m last; then top-30 gainers first, then the top-10 by volume, then the movers, then the rest (stable: the same coin keeps its timeframe order) */
@@ -6601,6 +6602,19 @@ async function microFetch(rec){
   await Promise.allSettled(jobs);
 }
 function microGet(rec){ if(!rec.microP){ rec.microTry=Date.now(); rec.microP=microFetch(rec).then(()=>{ rec.microP=null; },()=>{ rec.microP=null; }); } return rec.microP; }
+/* The 1-minute scan is secondary (3m / 5m / 15m come first).  A 1-minute signal is issued only when it is exceptional: grade S, fully confirmed (class A), every higher timeframe aligned
+   and — where the unified quality score exists — a score of at least M1_UQ.  Anything less is skipped and only counted (DIAG.m1Skip).  Settings → "1-minute signals" = 'all' lifts the rule. */
+const M1_UQ=55;
+function m1Exceptional(sig){
+  if(SET.m1Mode==='all') return {ok:true,miss:[]};
+  const miss=[];
+  if(sig.grade!=='S') miss.push('grade '+(sig.grade||'?')+' (needs S)');
+  if(sig.cls==='B') miss.push('not fully confirmed (class B)');
+  if(sig.htfTag!=='ALIGNED') miss.push('higher timeframes '+String(sig.htfTag||'UNKNOWN').toLowerCase()+' (need aligned)');
+  if(sig.uq&&sig.uq.score<M1_UQ) miss.push('quality '+sig.uq.score+' (needs '+M1_UQ+')');
+  return {ok:!miss.length,miss};
+}
+function m1Note(sig){ if(SET.m1Mode!=='all') sig.gates.push({ok:true,txt:'Exceptional 1-minute setup: grade S, fully confirmed, every higher timeframe aligned'+(sig.uq?', quality '+sig.uq.score:'')}); sig.m1Elite=SET.m1Mode!=='all'; }
 function tryConfirmTf(rec,dir,id,sc,again){
   const bars=rec.bars, L=bars.length-1; if(!sc||!sc.ok||!L||!rec.tfT||rec.tfT[id]!==sc.t) return;
   const pk=TFSIG.key[id], P=PRESETS[pk], ctx=ctxFor(rec), t=bars[L].t+60, px=bars[L].c, h=rec.htf&&rec.htf.ok?rec.htf:null;
@@ -6658,6 +6672,7 @@ function tryConfirmTf(rec,dir,id,sc,again){
       sig.liq={pts:liq.pts,txt:liq.txt,flags:liq.flags,parts:liq.parts,target:liq.target,exposure:liq.exposure,behind:liq.behind,raid:liq.sweep?{txt:liq.sweep.txt,age:liq.sweep.age,again:liq.sweep.again,disp:liq.sweep.disp,dir:liq.sweep.dir}:null}; DIAG.liqSeen=(DIAG.liqSeen||0)+1; if(liq.flags.length) DIAG.liqFlag=(DIAG.liqFlag||0)+1; } }catch(e){ ERR++; MK.lastErr=e; liq=null; }
     sig.uq=unifiedQuality(sig,{micro:sig.micro,liq,against:eg?eg.against.map(h=>({id:h.id,strength:h.strength})):[],lone,cross:{with:act.filter(s=>s.dir===dir).length,against:act.filter(s=>s.dir===-dir).length}}); sig.sizeMul=uqSizeMul(sig.uq,sig.cls);
   }catch(e){ ERR++; MK.lastErr=e; }
+  if(id==='1m'){ const x=m1Exceptional(sig); if(!x.ok){ DIAG.m1Skip=(DIAG.m1Skip||0)+1; tfWhy(id,'1-minute setup is not exceptional: '+x.miss[0]); return; } m1Note(sig); }
   if(sig.uq&&SET.minQ>0&&sig.uq.score<SET.minQ){ DIAG.uqLow=(DIAG.uqLow||0)+1; tfWhy(id,'unified quality below the minimum'); suppress(rec,dir,fake,id+' setup: quality '+sig.uq.score+' ('+sig.uq.tier+') is below your minimum of '+SET.minQ); return; }
   DIAG.tfIssued++; tfWhyBox(id).issued++; emitSignal(sig,rec);
 }
@@ -6680,6 +6695,17 @@ function applyTiers(){
 const isPri=r=>r.tier<3||!!r.mover;
 /* which markets are scanned on the timeframes: the priority markets always (gainers, then volume leaders, then movers), then the most liquid ones up to SET.tfTop — loaded and not stale — recomputed every few seconds by tfTick.
    The 1-minute set is the first SET.tf1Top of that order (1-minute signals are the least valuable: they are gone before the page is opened) */
+/* TAIL PATROL: the markets below the scanned set (SET.tfTop + gainers) are not left unread.  A rotating window of SET.tfRot of them is read every TFROT.ms on the 3m and 5m candles only — those are built from the
+   1-minute stream that is already running, so the patrol costs CPU (a few evaluations) and no network request.  Each visit judges the newest finished 3m / 5m candle once (the same "first look" a freshly loaded market gets);
+   a signal from it still passes every gate, the higher-timeframe and order-book fetches happen only for candidates.  A full round over the tail takes about tail ÷ window × TFROT.ms. */
+const TFROT={i:0,t:0,ms:30000,win:[],tail:0,round:0,seen:new Set()};
+function tfTail(a,seen,n){
+  const w=SET.tfRot==null?25:SET.tfRot, tail=w>0?a.slice(n).filter(r=>!seen.has(r.sym)&&r.venue!=='S'&&(r.q24||0)>=PRIO.minQ/5):[]; TFROT.tail=tail.length;
+  if(!tail.length){ TFROT.win=[]; return []; }
+  const now=Date.now(); if(!TFROT.t||now-TFROT.t>=TFROT.ms){ if(TFROT.t){ TFROT.i+=w; if(TFROT.i>=tail.length){ TFROT.i=0; TFROT.round++; } } TFROT.t=now; TFROT.fresh=true; }
+  const out=[]; for(let k=0;k<Math.min(w,tail.length);k++) out.push(tail[(TFROT.i+k)%tail.length]);
+  TFROT.win=out.map(r=>r.sym); return out;
+}
 function tfRanks(){
   applyTiers();
   const a=[...MK.syms.values()].filter(r=>r.hist&&r.hydrated&&!r.stale&&r.bars.length>=ENG.minBars+8).sort(byPrio), n=SET.tfTop||200, core=a.filter(r=>r.tier<3).length;
@@ -6687,7 +6713,11 @@ function tfRanks(){
   const base=a.slice(0,n), seen=new Set(base.map(r=>r.sym));
   /* every other gainer (up 3 % or more, liquid enough) is read on the timeframes too — the Gainers tab looks for unabsorbed liquidity on ALL of them, not only the top 30 */
   a.filter(r=>r.tier===3&&!r.mover&&!seen.has(r.sym)&&r.venue!=='S'&&r.chg24>=3&&(r.q24||0)>=PRIO.minQ).sort((x,y)=>y.chg24-x.chg24).slice(0,SET.gainMore==null?40:SET.gainMore).forEach(r=>{ base.push(r); seen.add(r.sym); });
-  MK.syms.forEach(r=>{ r.tfIn=false; r.tfIn1=false; }); base.forEach(r=>{ r.tfIn=true; }); a.slice(0,n1).forEach(r=>{ r.tfIn1=true; }); return base;
+  MK.syms.forEach(r=>{ r.tfIn=false; r.tfIn1=false; r.tfRot=false; }); base.forEach(r=>{ r.tfIn=true; }); a.slice(0,n1).forEach(r=>{ r.tfIn1=true; });
+  const rot=tfTail(a,seen,n), fresh=TFROT.fresh; TFROT.fresh=false;
+  rot.forEach(r=>{ r.tfIn=true; r.tfRot=true; base.push(r); });
+  if(fresh) rot.forEach(r=>{ TFROT.seen.add(r.sym); DIAG.tfRotVisit=(DIAG.tfRotVisit||0)+1; enqTf(r,'3m'); enqTf(r,'5m'); });                 /* a visit judges the newest finished 3m / 5m candle (evalTf skips a candle it has already judged) */
+  return base;
 }
 /* GAINERS BOARD: every coin that is up on the day, ranked by how well its unabsorbed lone-candle zones line up across the timeframes (mi_lone.js).  Cached for 2 s; a new timeframe record resets the cache. */
 const GB={t:0,v:null};
@@ -6729,6 +6759,7 @@ function tryConfirm(rec,dir,again){
   if(fa){ sig.adv=advSummary(fa); sig.conv=fa.tier; }
   if(hc.align==='MIXED'||hc.align==='UNKNOWN') sig.gates.push({ok:hc.align==='MIXED',txt:hc.align==='UNKNOWN'?'Higher-timeframe data was not available — the signal is based on the 1m/5m engine only':'Higher timeframes: '+hc.txt});
   try{ sig.mind=buildMind(rec,dir,'1m',deep,null,sig,hc); }catch(e){ ERR++; MK.lastErr=e; }
+  { const x=m1Exceptional(sig); if(!x.ok){ DIAG.m1Skip=(DIAG.m1Skip||0)+1; return; } m1Note(sig); }
   emitSignal(sig,rec);
 }
 /* single entry point: registry (idempotent by id) → host hook → persistence. Dashboard cards, the feed and the API are all derived from REG.sigs, so they cannot disagree. */
@@ -7052,7 +7083,7 @@ function save(){
 }
 function saveBT(){ try{ localStorage.setItem(LS_BT,JSON.stringify(BT)); }catch(e){} }
 function loadAll(){
-  try{ const o=JSON.parse(localStorage.getItem(LS_KEY)||'null'); if(o){ Object.assign(SET,o.set||{}); applyScalp(SET.scalp); if(SET.tfsV!==4){ SET.tfs=TFSIG.ids.slice(); if(SET.tfsV==null||SET.tfsV<4){ if(SET.tf1Top===60||SET.tf1Top==null) SET.tf1Top=30; } SET.tfsV=4; } SET.tfs=Array.isArray(SET.tfs)?TFSIG.ids.filter(x=>SET.tfs.indexOf(x)>=0):TFSIG.ids.slice(); if(!(SET.tfTop>=20)) SET.tfTop=150; if(o.reg) REG.load(o.reg); (o.supp||[]).forEach(x=>SUPP.push(x)); } }catch(e){}
+  try{ const o=JSON.parse(localStorage.getItem(LS_KEY)||'null'); if(o){ Object.assign(SET,o.set||{}); applyScalp(SET.scalp); if(SET.tfsV!==5){ SET.tfs=['1m','3m','5m','15m','30m','1h','4h']; if(SET.tfsV==null||SET.tfsV<4){ if(SET.tf1Top===60||SET.tf1Top==null) SET.tf1Top=30; } SET.tfsV=5; } SET.tfs=Array.isArray(SET.tfs)?TFSIG.ids.filter(x=>SET.tfs.indexOf(x)>=0):TFSIG.ids.slice(); if(!(SET.tfTop>=20)) SET.tfTop=150; if(o.reg) REG.load(o.reg); (o.supp||[]).forEach(x=>SUPP.push(x)); } }catch(e){}
   try{ const b=JSON.parse(localStorage.getItem(LS_BT)||'null'); if(b&&b.trades){ BT.trades=b.trades; BT.alerts=b.alerts||[]; BT.at=b.at||0; BT.info=b.info||null; } }catch(e){}
   /* signals that were still open when the page was closed: the missed minutes are replayed from exchange history once data is loaded (see resumeOpen) */
 }
@@ -7228,7 +7259,7 @@ function radarDetail(x){
 }
 function renderEngineRadar(){
   const el=$('radarEng'); if(!el) return; const all=engineRadar(500), cnt={}; all.forEach(x=>{ cnt[x.tf]=(cnt[x.tf]||0)+1; });
-  const ch=$('radarTf'); if(ch){ ch.innerHTML='<button class="chipbtn'+(!UI.rtf?' on':'')+(all.length?' has':'')+'" data-rtf="">All <b>'+all.length+'</b></button>'+TFSIG.ids.map(id=>{ const off=SET.tfs.indexOf(id)<0; return '<button class="chipbtn'+(UI.rtf===id?' on':'')+(cnt[id]?' has':'')+'" data-rtf="'+id+'">'+id+' <b>'+(cnt[id]||0)+'</b>'+(off?'<small>off</small>':'')+'</button>'; }).join('');
+  const ch=$('radarTf'); if(ch){ ch.innerHTML='<button class="chipbtn'+(!UI.rtf?' on':'')+(all.length?' has':'')+'" data-rtf="">All <b>'+all.length+'</b></button>'+TF_SHOW.map(id=>{ const off=SET.tfs.indexOf(id)<0; return '<button class="chipbtn'+(UI.rtf===id?' on':'')+(cnt[id]?' has':'')+'" data-rtf="'+id+'">'+id+' <b>'+(cnt[id]||0)+'</b>'+(off?'<small>off</small>':'')+'</button>'; }).join('');
     ch.querySelectorAll('.chipbtn').forEach(b=>{ b.onclick=()=>{ UI.rtf=b.dataset.rtf; renderEngineRadar(); }; }); }
   const L=(UI.rtf?all.filter(x=>x.tf===UI.rtf):all).slice(0,40); let scanned=0, gscan=0; MK.syms.forEach(r=>{ if(r.tfIn&&!r.stale){ scanned++; if(r.tier===1) gscan++; } });
   const nInv=L.filter(x=>x.status==='INVALIDATED').length; $('radarEngSub').textContent=(L.length-nInv)+' forming'+(nInv?' · '+nInv+' invalidated':'')+(UI.rtf?' on '+UI.rtf:' · '+SET.tfs.join(' ')+' candles')+' · '+scanned+' coins scanned'+(gscan?' ('+gscan+' top gainers first, then the top-10 by volume)':'')+' · promoted to Signals automatically on confirmation';
@@ -7257,7 +7288,7 @@ const EV_CLS={signal:'entry',entry:'entry',tp1:'tp1',tp2:'tp2',tp3:'tp3',stop:'s
 function renderTfChips(all){
   const el=$('tfChips'); if(!el) return; const cnt={}; all.forEach(s=>{ if(s.src==='test') return; const k=s.tf||'1m'; cnt[k]=(cnt[k]||0)+1; });
   const tot=all.filter(s=>s.src!=='test').length;
-  el.innerHTML='<button class="chipbtn'+(!UI.ftf?' on':'')+(tot?' has':'')+'" data-tf="">All <b>'+tot+'</b></button>'+TFSIG.all.map(id=>{ const off=id!=='1m'&&SET.tfs.indexOf(id)<0, n=cnt[id]||0;
+  el.innerHTML='<button class="chipbtn'+(!UI.ftf?' on':'')+(tot?' has':'')+'" data-tf="">All <b>'+tot+'</b></button>'+TF_SHOW.map(id=>{ const off=id!=='1m'&&SET.tfs.indexOf(id)<0, n=cnt[id]||0;
     return '<button class="chipbtn'+(UI.ftf===id?' on':'')+(n?' has':'')+'" data-tf="'+id+'" title="'+TFSIG.label[id]+(id==='1m'?' momentum scanner + engine scan':' engine scan')+(off?' — switched off in Settings':'')+'">'+id+' <b>'+n+'</b>'+(off?'<small>off</small>':'')+'</button>'; }).join('');
   el.querySelectorAll('.chipbtn').forEach(b=>{ b.onclick=()=>{ UI.ftf=b.dataset.tf; const f=$('fTf'); if(f) f.value=UI.ftf; renderSignals(); }; });
 }
@@ -7374,7 +7405,7 @@ function sigCard(s){
   const cls=(L?'buy':'sell')+(t.outcome==='WIN'?' win':t.outcome==='LOSS'?' loss':'')+(fresh?' just-arrived':'');
   const why=(s.why||[]).slice(0,3).map(w=>'<li><b>'+esc(w.name)+':</b> '+esc(w.txt)+'</li>').join('');
   const ev=s.events||[];
-  return '<div class="signal-card '+cls+'" data-id="'+esc(s.id)+'"><div class="card-header"><span class="nm" data-sym="'+s.sym+'">'+esc(symName(r))+'</span><span class="badge '+(L?'buy':'sell')+'">'+(L?'LONG':'SHORT')+'</span>'+(test?'<span class="badge test">TEST</span>':'<span class="badge etype">'+esc(s.etype||'Signal')+'</span><span class="badge tf" title="candle size the setup was detected on · exchange the price comes from">'+esc(s.tf||'1m')+' · '+venueTag(s.venue)+'</span>'+(s.noFlow?'<span class="badge nf" title="This exchange\'s candles carry no taker-buy volume or trade count, so order-flow evidence is not available for this coin. The setup comes from the engines alone.">no taker-flow data</span>':'')+(s.cls==='B'?'<span class="badge clsb" title="Class B: the engine setup is confirmed and every risk gate passed, but a confirmation is short — see the note on the card">CLASS B</span>':'')+'<span class="badge tier-'+esc(s.grade||'C')+'" title="evidence grade — a ranking of how much independent evidence agrees, not a probability">GRADE '+esc(s.grade||'C')+'</span>'+(s.mode==='ENGINE'&&s.eng?'<span class="badge eng" title="a setup raised by one engine on its own — see the Engines tab">⚙ '+esc(s.eng.id)+' · '+esc(s.eng.name)+'</span>':'<span class="badge '+(s.stage>=4?'confirmed s4':'prov')+'">'+esc(s.label)+'</span>')+(s.conv?'<span class="badge conv-'+esc(s.conv)+'" title="institutional conviction tier — a rule-based ranking, not a probability">'+esc(tierName(s.conv))+'</span>':''))+'<span class="px">'+pf(px)+'<br>'+ago(nowSec()-s.t)+' ago</span></div>'+
+  return '<div class="signal-card '+cls+'" data-id="'+esc(s.id)+'"><div class="card-header"><span class="nm" data-sym="'+s.sym+'">'+esc(symName(r))+'</span><span class="badge '+(L?'buy':'sell')+'">'+(L?'LONG':'SHORT')+'</span>'+(test?'<span class="badge test">TEST</span>':'<span class="badge etype">'+esc(s.etype||'Signal')+'</span><span class="badge tf" title="candle size the setup was detected on · trade category · exchange the price comes from">'+esc(s.tf||'1m')+' '+esc((TF_CAT[s.tf||'1m']||'').toLowerCase())+' · '+venueTag(s.venue)+'</span>'+(s.noFlow?'<span class="badge nf" title="This exchange\'s candles carry no taker-buy volume or trade count, so order-flow evidence is not available for this coin. The setup comes from the engines alone.">no taker-flow data</span>':'')+(s.cls==='B'?'<span class="badge clsb" title="Class B: the engine setup is confirmed and every risk gate passed, but a confirmation is short — see the note on the card">CLASS B</span>':'')+'<span class="badge tier-'+esc(s.grade||'C')+'" title="evidence grade — a ranking of how much independent evidence agrees, not a probability">GRADE '+esc(s.grade||'C')+'</span>'+(s.mode==='ENGINE'&&s.eng?'<span class="badge eng" title="a setup raised by one engine on its own — see the Engines tab">⚙ '+esc(s.eng.id)+' · '+esc(s.eng.name)+'</span>':'<span class="badge '+(s.stage>=4?'confirmed s4':'prov')+'">'+esc(s.label)+'</span>')+(s.conv?'<span class="badge conv-'+esc(s.conv)+'" title="institutional conviction tier — a rule-based ranking, not a probability">'+esc(tierName(s.conv))+'</span>':''))+'<span class="px">'+pf(px)+'<br>'+ago(nowSec()-s.t)+' ago</span></div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+(s.regime&&s.regime!=='UNKNOWN'?'<span class="badge regime">'+esc(s.regime.replace('_',' '))+'</span>':'')+(s.sess?'<span class="badge regime">'+esc(s.sess)+'</span>':'')+'<span class="badge htf-'+esc(s.htfTag||'UNKNOWN')+'">HTF '+esc(s.htfTag||'UNKNOWN')+'</span>'+(s.tier?'<span class="badge tier-C">'+esc(tierTxt(s.tier))+' liquidity</span>':'')+'</div>'+
     (test?'':basisRow(s)+qualityRow(s)+liqRow(s)+microRow(s))+
     (test?'':classBanner(s))+
@@ -7441,24 +7472,26 @@ function funnelStrip(){
 /* per timeframe: scans → setups seen → passed the gates → issued, with the most common blocking reasons (so a quiet timeframe can be understood, not guessed at) */
 function tfFunnelHtml(){
   const ids=TFSIG.ids.filter(id=>DIAG.tfBy[id]), n1=Math.max(10,Math.round((SET.tf1Top||30)*TFL.scale));
-  const load='<div class="note" style="margin-top:8px">Scan load: '+Math.round(TFL.duty*100)+'% of the time spent evaluating timeframes (30-second average) · 1-minute universe: '+n1+' coins'+(TFL.scale<1?' <b>(reduced automatically to keep the phone smooth)</b>':'')+'</div>';
+  const load='<div class="note" style="margin-top:8px">Scan load: '+Math.round(TFL.duty*100)+'% of the time spent evaluating timeframes (30-second average) · 1-minute universe: '+n1+' coins'+(TFL.scale<1?' <b>(reduced automatically to keep the phone smooth)</b>':'')+(SET.tfRot>0?' · patrol of the other markets (3m / 5m): '+TFROT.seen.size+' of '+TFROT.tail+' read since this page opened':'')+(SET.m1Mode!=='all'?' · 1-minute setups skipped as not exceptional: '+(DIAG.m1Skip||0):'')+'</div>';
   if(!ids.length) return '<div class="note" style="margin-top:12px">Per-timeframe scan results appear after the first candle of each timeframe closes.</div>'+load;
   return '<h4 class="mut" style="margin:14px 0 6px">Per timeframe — where setups stop (since this page was opened)</h4><div class="tw"><table class="t"><tr><th>TF</th><th>Scans</th><th>Setups seen</th><th>Passed all gates</th><th>Issued (A+B)</th><th>of them class B</th><th>Most common blockers</th></tr>'+
     ids.map(id=>{ const W=DIAG.tfBy[id], top=Object.entries(W.why).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,n])=>esc(k)+' ×'+n).join('<br>'); return '<tr><td><b>'+id+'</b></td><td class="mono">'+W.scan+'</td><td class="mono">'+W.hit+'</td><td class="mono">'+W.pass+'</td><td class="mono"><b>'+W.issued+'</b></td><td class="mono">'+(W.issuedB||0)+'</td><td class="mut" style="font-size:11px">'+(top||'—')+'</td></tr>'; }).join('')+'</table></div>'+load;
 }
 /* ---------------- settings pop-over ---------------- */
-function tfSetHtml(){ return '<div class="tfchips" style="flex-wrap:wrap;overflow:visible">'+TFSIG.ids.map(id=>'<button class="chipbtn'+(SET.tfs.indexOf(id)>=0?' on':'')+'" data-tfset="'+id+'">'+id+'</button>').join('')+'</div>'; }
+function tfSetHtml(){ return '<div class="tfchips" style="flex-wrap:wrap;overflow:visible">'+TF_SHOW.map(id=>'<button class="chipbtn'+(SET.tfs.indexOf(id)>=0?' on':'')+'" data-tfset="'+id+'">'+id+'</button>').join('')+'</div>'; }
 function renderSettings(){
   const o=(k,opts)=>'<select class="ctl" data-set="'+k+'">'+opts.map(x=>'<option value="'+x[0]+'"'+(String(SET[k])===String(x[0])?' selected':'')+'>'+x[1]+'</option>').join('')+'</select>';
   const P=PRESETS[SET.preset]; $('presetSel').value=SET.preset;
   setHTML('setBox','<b style="letter-spacing:1px;font-size:12px">SETTINGS</b>'+
     '<label class="note">Signal preset</label>'+o('preset',[['ELITE','Elite — high-conviction only, evidence ≥66, 5 families'],['STRICT','Strict — evidence ≥62, 4 families'],['BALANCED','Balanced — evidence ≥55, 3 families'],['EARLY','Early — evidence ≥48, 3 families'],['ENGINE','Engine-led — one engine setup is enough (strength ≥60), all safety gates stay']])+'<div class="note" style="margin-top:4px">Now: '+(P.indep?'a single engine setup of strength ≥ '+Math.round(P.engMin*100)+' (pump/dump stage and evidence-count gates do not apply)':'evidence ≥ '+P.minScore+', ≥ '+P.minFams+' families')+(P.advTier?', conviction ≥ '+tierName(P.advTier):'')+', R:R ≥ '+P.minRR+'. The Backtest Lab compares all presets on the same data.</div>'+
-    '<label class="note">Timeframes the engines scan. Scalps: 3m / 5m / 15m are judged first. Intraday: 30m / 1h / 4h / 12h / 1d. Swing: 1d / 3d / 1w. The 1-minute scan runs last and only on the leading coins (1m / 3m / 5m use the live 1-minute stream; the rest download exchange candles)</label>'+tfSetHtml()+'<label class="note">Scalp sensitivity (1m / 3m / 5m / 15m): the minimum setup strength. Every risk, room, manipulation, structure and higher-timeframe gate stays on in all three modes — "More" only lets slightly cleaner-than-minimum formations through, so expect more signals and a lower average grade (see Performance by grade).</label>'+o('scalp',[['strict','Strict — strength ≥ 66'],['balanced','Balanced — strength ≥ 60 (default)'],['more','More signals — strength ≥ 55']])+o('tf1Top',[[30,'1-minute engine scan: leading coins only (default)'],[60,'1-minute engine scan: 60 most liquid coins'],[100,'1-minute engine scan: 100 coins (heavy on a phone)']])+o('tfTop',[[60,'Scan the 60 most liquid coins per timeframe'],[100,'Scan the 100 most liquid coins'],[150,'Scan the 150 most liquid coins'],[200,'Scan the 200 most liquid coins (default)'],[250,'Scan the 250 most liquid coins (heavier on a phone)']])+
+    '<label class="note">Timeframes the engines scan for signals. Scalps: 3m / 5m / 15m are judged first. Intraday: 30m / 1h / 4h. 12h and 1d are position trades: off by default (the daily, 3-day, 5-day and weekly charts are still read, as the higher-timeframe trend behind every signal). The 1-minute scan runs last and a 1-minute signal is issued only when it is exceptional (3m / 5m use the live 1-minute stream; the rest download exchange candles)</label>'+tfSetHtml()+'<label class="note">Scalp sensitivity (1m / 3m / 5m / 15m): the minimum setup strength. Every risk, room, manipulation, structure and higher-timeframe gate stays on in all three modes — "More" only lets slightly cleaner-than-minimum formations through, so expect more signals and a lower average grade (see Performance by grade).</label>'+o('scalp',[['strict','Strict — strength ≥ 66'],['balanced','Balanced — strength ≥ 60 (default)'],['more','More signals — strength ≥ 55']])+o('tf1Top',[[30,'1-minute engine scan: leading coins only (default)'],[60,'1-minute engine scan: 60 most liquid coins'],[100,'1-minute engine scan: 100 coins (heavy on a phone)']])+o('tfTop',[[60,'Scan the 60 most liquid coins per timeframe'],[100,'Scan the 100 most liquid coins'],[150,'Scan the 150 most liquid coins'],[200,'Scan the 200 most liquid coins (default)'],[250,'Scan the 250 most liquid coins (heavier on a phone)']])+
     '<label class="note">Spot Outlook (investment view of the major coins, daily candles, runs in the background)</label>'+o('spotOn',[['true','On'],['false','Off']])+'<div style="height:6px"></div>'+o('spotN',[[3,'3 coins — BTC, ETH, SOL'],[5,'5 coins — BTC, ETH, SOL + 2 most-traded'],[8,'8 coins'],[12,'12 coins']])+
     '<label class="note">Account size (USD) — position sizing &amp; paper account</label><input class="ctl" type="number" min="100" step="100" data-set="acct" value="'+SET.acct+'">'+
     '<label class="note">Risk per trade</label>'+o('riskPct',[[.25,'0.25% of account'],[.5,'0.5% of account'],[1,'1% of account'],[2,'2% of account']])+
     '<label class="note">Signal flow</label>'+o('flow',[['all','All: class A + class B, including setups with only ONE engine cluster behind them — the most signals'],['balanced','Balanced: class A + class B where the engines agree twice but the institutional read is only weak'],['strict','Strict: class A only']])+
     '<label class="note">Minimum quality score — every setup gets a 0–100 rank from agreement of independent schools, conflicts, higher timeframes, unabsorbed zones, risk and timing (a rank, not a probability). Setups below it are not issued and are listed under “not issued”</label>'+o('minQ',[[0,'Off — every setup that passes the gates (default)'],[40,'40 — drop only the weakest'],[55,'55 — Strong and Prime only'],[70,'70 — Prime only, very few signals']])+
+    '<label class="note">Patrol of the other markets — markets below the scanned set are read on the 3m and 5m candles in a rotating window (no extra downloads; the full round takes a few minutes)</label>'+o('tfRot',[[25,'On — 25 markets every 30 seconds (default)'],[50,'On — 50 markets every 30 seconds (faster round, more CPU)'],[0,'Off — only the scanned set']])+
+    '<label class="note">1-minute signals — the 1-minute scan is secondary to 3m / 5m / 15m</label>'+o('m1Mode',[['elite','Exceptional only — grade S, fully confirmed, every higher timeframe aligned, quality ≥ 55 (default)'],['all','Every 1-minute setup that passes the gates']])+
     '<label class="note">Sound / popup for class B</label>'+o('alertB',[['false','Off — class B goes quietly to the feed'],['true','On — same alerts as class A']])+
     '<label class="note">Scan order</label>'+o('gainFirst',[['true','Top-30 gainers first → top-10 by volume → pumped / hot / falling movers → the rest (a long on a coin already +25% needs the higher timeframes aligned; at +50% near its high it waits for a pullback)'],['false','Most liquid first (no gainer priority)']])+
     '<label class="note">Signal strictness</label>'+o('precision',[['true','Precision — a second independent confirmation, BTC not against it (fewer, stricter signals)'],['false','Standard — one confirmed method is enough']])+
@@ -7538,7 +7571,7 @@ const COVER=[
  ['Engines','Statistical models: Hurst, entropy, CUSUM, Kalman, regression channel, OU half-life, VPIN-lite','partial','Implemented as descriptive estimators on bars up to the current one (no look-ahead, tested). On a few hundred bars they are noisy and are used as one family, not as a prediction. VPIN-lite uses candles as volume buckets and needs real taker-buy volume.'],
  ['Engines','Historical-similarity (analog) evidence','na','Not built yet. It will be shown only with enough comparable past cases to be statistically meaningful, and never as a forecast.'],
  ['Venues','Bybit Futures pairs scanned for signals','partial','Built and tested against simulated exchange responses only — NOT yet verified against the live Bybit service. Covers Bybit USDT perpetuals that Binance does not list (shared coins are read from Binance, which has taker-flow data). Bybit candles have no taker-buy volume, so those coins use the engines only; momentum pump/dump stages, order book, open interest and trade tape are not available for them. Not back-tested yet.'],
- ['Timeframes','Engine scans on 1m / 3m / 5m / 15m / 30m / 1H / 4H / 12H / 1D / 3D / 1W','ok','Each timeframe reads its own candles (1m, 3m and 5m are built from the live 1-minute stream; 15m / 30m / 1h / 4h / 12h / 1d are real exchange candles downloaded after each close) and raises its own signal with its own stop, targets, hold time and cool-down. The most liquid coins are scanned (default 150, changeable in Settings). Hit rates are measured per timeframe on the live signals — these timeframes are NOT part of the history back-test.'],
+ ['Timeframes','Engine scans on 1m / 3m / 5m / 15m / 30m / 1H / 4H / 12H / 1D','ok','Each timeframe reads its own candles (1m, 3m and 5m are built from the live 1-minute stream; 15m / 30m / 1h / 4h / 12h / 1d are real exchange candles downloaded after each close) and raises its own signal with its own stop, targets, hold time and cool-down. The most liquid coins are scanned (default 150, changeable in Settings). Hit rates are measured per timeframe on the live signals — these timeframes are NOT part of the history back-test.'],
  ['Chart','Interactive layers (entry/SL/TP, engine zone, OB/FVG/S-D, BOS/CHoCH, volume profile, levels)','partial','Layer chips under the detail chart switch each group on or off. Overlays come from the same engine that produced the signal. No drawing tools, zoom or pan yet.'],
  ['Method','"AI" model','partial','The engine is a transparent evidence-weighting system with empirical calibration, not a trained neural network. Weights are design choices, not optimised values.']
 ];
