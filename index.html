@@ -248,6 +248,9 @@ table.t tr.cur td{background:#141b27;color:var(--text)}
 
 
 .signal-card .basis.liq>b{color:#6FB7FF;font-weight:600}.signal-card .basis.liq>i.neg{color:#E7B04C}
+.badge.mcat{background:rgba(250,204,21,.14);color:#FACC15;border:1px solid rgba(250,204,21,.35)}
+.badge.ss{background:linear-gradient(90deg,#F59E0B,#EF4444);color:#fff;font-weight:800;letter-spacing:1px}
+#catChips{margin-bottom:4px}
 </style>
 </head>
 <body>
@@ -301,6 +304,7 @@ table.t tr.cur td{background:#141b27;color:var(--text)}
           <select class="ctl" id="fSort"><option value="t">Newest first</option><option value="score">Highest evidence</option><option value="rr">Best R:R</option></select>
           <span class="note" id="sigSub" style="margin-left:auto"></span>
         </div>
+        <div class="tfchips" id="catChips"></div>
         <div class="tfchips" id="tfChips"></div>
         <div id="sigActive"></div>
         <div class="panel" style="margin-top:14px"><div class="ph"><h2>SIGNAL FEED</h2><span class="sub" id="feedSub">every signal, status change and suppressed setup — one record each</span></div><div class="pb" id="feedBox"></div></div>
@@ -339,7 +343,7 @@ table.t tr.cur td{background:#141b27;color:var(--text)}
       </section>
       <section id="v-mkts" hidden>
         <div id="hydBox"></div>
-        <div class="tb"><input class="ctl" id="mSearch" placeholder="Search…" style="width:160px"><div class="seg" id="segM"><button data-v="" class="on">ALL</button><button data-v="F">PERPS</button><button data-v="S">SPOT</button><button data-v="B">BYBIT</button><button data-v="N">NEW</button></div>
+        <div class="tb"><input class="ctl" id="mSearch" placeholder="Search…" style="width:160px"><div class="seg" id="segM"><button data-v="" class="on">ALL</button><button data-v="F">PERPS</button><button data-v="S">SPOT</button><button data-v="B">BYBIT</button><button data-v="N">NEW</button><button data-v="metal">GOLD·METALS</button><button data-v="energy">OIL·GAS</button><button data-v="equity">STOCKS</button></div>
           <div class="seg" id="segMS"><button data-v="q" class="on">VOLUME</button><button data-v="c">24H %</button><button data-v="o">SCORE</button></div></div>
         <div class="panel"><div class="ph"><h2>ALL MONITORED MARKETS</h2><span class="sub" id="mSub"></span></div><div class="list" id="mList"></div></div>
       </section>
@@ -5188,6 +5192,40 @@ function spotAnalyze(sym,d,btc){
 }
 if(typeof module!=='undefined') module.exports={SPOT_H,SPOT_VERDICT,SPOT_MIN_SAMPLES,spotWeeks,spotSwings,spotSeries,spotFactors,spotDecide,spotJudge,spotForward,spotStats,spotThin,spotHistory,spotLevels,spotScenarios,spotChange,spotAnalyze};
 
+/* ===== src/engine/mi_cat.js ===== */
+'use strict';
+/* ============================================================================================================================
+   mi_cat.js — which market a symbol belongs to: crypto, metals (gold · silver · platinum · palladium · copper), energy (crude oil · natural gas), stocks / ETFs, indices.
+
+   Binance lists "TradFi perpetuals" (gold, silver, oil, US stocks …) next to the crypto perpetuals, with the same USDT quote.  They carry a different contractType and an underlyingType other than COIN, which is
+   why a filter written for plain "PERPETUAL" contracts never loaded them.  Bybit lists gold / silver as ordinary USDT linear perpetuals.  Classification therefore uses, in this order:
+     1. the base asset when it is an unambiguous commodity name (XAU, XAG, XPT, XPD, COPPER, CL, BZ, NATGAS — and the tokenised-gold coins PAXG / XAUT)
+     2. the exchange's own underlyingType (COMMODITY, EQUITY, INDEX …)
+     3. the exchange's underlyingSubType (a TRADFI marker without a better hint is treated as a stock / ETF)
+   Anything else is crypto.  Pure functions: the result is only a label used to order the scan, filter the lists and show a badge; no gate reads it.
+   ============================================================================================================================ */
+const CAT_NAME={crypto:'Crypto',metal:'Gold · Silver · Metals',energy:'Oil · Gas',equity:'Stocks · ETFs',index:'Indices'};
+const CAT_SHORT={crypto:'CRYPTO',metal:'METAL',energy:'ENERGY',equity:'STOCK',index:'INDEX'};
+const CAT_ORDER=['metal','energy','equity','index','crypto'];
+const METAL_BASES=new Set(['XAU','XAG','XPT','XPD','COPPER','XCU','PAXG','XAUT']);
+const ENERGY_BASES=new Set(['CL','BZ','NATGAS','NG','WTI','BRENT']);
+const MARKET_TITLE={XAU:'Gold',XAG:'Silver',XPT:'Platinum',XPD:'Palladium',COPPER:'Copper',XCU:'Copper',PAXG:'Gold (PAXG)',XAUT:'Gold (XAUT)',CL:'WTI crude oil',BZ:'Brent crude oil',NATGAS:'Natural gas',NG:'Natural gas',WTI:'WTI crude oil',BRENT:'Brent crude oil'};
+/* info = {under: underlyingType string, sub: underlyingSubType array or string, ct: contractType string} (all optional) */
+function marketCat(base,info){
+  const b=String(base||'').toUpperCase(), i=info||{}, under=String(i.under||'').toUpperCase(), sub=[].concat(i.sub||[]).map(x=>String(x).toUpperCase());
+  if(METAL_BASES.has(b)) return 'metal'; if(ENERGY_BASES.has(b)) return 'energy';
+  if(under==='COMMODITY') return 'metal';
+  if(under==='EQUITY'||under==='STOCK'||under==='ETF') return 'equity';
+  if(under==='INDEX') return 'index';
+  if(sub.indexOf('TRADFI')>=0||sub.indexOf('TRADIFI')>=0) return 'equity';
+  if(/TRAD(I)?FI/.test(String(i.ct||'').toUpperCase())) return 'equity';
+  return 'crypto';
+}
+function marketTitle(base){ return MARKET_TITLE[String(base||'').toUpperCase()]||null; }
+/* a Binance futures contract that can be scanned: PERPETUAL or a TradFi perpetual — never a dated (delivery) contract */
+function isPerpType(ct){ ct=String(ct||'').toUpperCase(); return ct==='PERPETUAL'||(/PERP/.test(ct)&&!/DELIVER|QUARTER|MONTH/.test(ct)); }
+if(typeof module!=='undefined') module.exports={CAT_NAME,CAT_SHORT,CAT_ORDER,marketCat,marketTitle,isPerpType};
+
 /* ===== src/engine/mi_prio.js ===== */
 /* ================================================================
    SCAN PRIORITY (pure — no DOM, no network)
@@ -6046,21 +6084,21 @@ function baseOf(sym,quote){ return sym.endsWith(quote)?sym.slice(0,-quote.length
 const stripMult=b=>b.replace(/^(1000000|1000)/,'');
 function mkRec(sym,venue,base,extra){
   return Object.assign({sym,venue,base,bars:[],hist:false,pending:[],st:newSymState(),ev:null,evAt:0,q24:0,chg24:0,last:0,lastTick:0,prevLast:0,live:null,
-    stale:false,fund:null,mark:null,listedAt:null,ageDays:null,risk:[],sigAt:0,watch:false,fails:0},extra||{});
+    stale:false,fund:null,mark:null,listedAt:null,ageDays:null,risk:[],sigAt:0,watch:false,fails:0,cat:'crypto'},extra||{});
 }
 async function loadUniverse(){
-  const first=MK.syms.size===0, seen=new Set(); let nPerp=0,nSpot=0;
+  const first=MK.syms.size===0, seen=new Set(); let nPerp=0,nSpot=0,nTrad=0; const tradSeen=[];
   let fx=null, sx=null;
   try{ fx=await jget(NET.fapi+'/fapi/v1/exchangeInfo','F',1,2); MK.health.fapi=true; }catch(e){ MK.health.fapi=false; mlog('Futures exchangeInfo failed: '+e.message,'bad'); }
   try{ sx=await jget(NET.spot+'/api/v3/exchangeInfo?permissions=SPOT','S',20,2); MK.health.spot=true; }catch(e){ MK.health.spot=false; mlog('Spot exchangeInfo failed: '+e.message,'bad'); }
   const perpBases=new Set(), spotAll=new Set(), covered=new Set();
   if(fx&&fx.symbols){
     fx.symbols.forEach(s=>{
-      if(s.contractType!=='PERPETUAL'||s.quoteAsset!=='USDT'||s.status!=='TRADING') return;
+      if(!isPerpType(s.contractType)||s.quoteAsset!=='USDT'||s.status!=='TRADING') return;          // PERPETUAL and the TradFi perpetuals (gold, silver, oil, stocks)
       seen.add(s.symbol); nPerp++; perpBases.add(stripMult(s.baseAsset)); covered.add(bybitBase(s.baseAsset));
       let r=MK.syms.get(s.symbol); if(r&&r.venue==='B'){ MK.syms.delete(s.symbol); r=null; }          // Binance now lists it: the Binance feed takes over
       if(!r){ r=mkRec(s.symbol,'F',s.baseAsset,{listedAt:s.onboardDate?s.onboardDate/1000:null}); r.isNew=!first; MK.syms.set(s.symbol,r); if(!first) mlog('New listing detected: '+s.symbol+' (perpetual)','ok'); }
-      r.kind=(s.underlyingType&&s.underlyingType!=='COIN')?String(s.underlyingType):'crypto';
+      r.kind=(s.underlyingType&&s.underlyingType!=='COIN')?String(s.underlyingType):'crypto'; r.cat=marketCat(s.baseAsset,{under:s.underlyingType,sub:s.underlyingSubType,ct:s.contractType}); if(r.cat!=='crypto'){ nTrad++; tradSeen.push(s.symbol+' '+r.cat+' ('+s.contractType+(s.underlyingType?' / '+s.underlyingType:'')+')'); }
     });
   }
   if(sx&&sx.symbols){
@@ -6074,6 +6112,7 @@ async function loadUniverse(){
       if(!r){ r=mkRec(s.symbol,'S',s.baseAsset); r.isNew=!first; r.kind='spot'; MK.syms.set(s.symbol,r); if(!first) mlog('New listing detected: '+s.symbol+' (spot)','ok'); }
     });
   }
+  if(fx&&first||nTrad&&!MK.tradLogged){ MK.tradLogged=true; mlog('TradFi / non-crypto perpetuals on Binance: '+(nTrad?nTrad+' ('+tradSeen.slice(0,12).join(', ')+(tradSeen.length>12?' …':'')+')':'none found in exchangeInfo — gold / silver then come from Bybit when listed there'),nTrad?'ok':'warn'); }
   /* Bybit USDT perpetuals that Binance does not list — isolated: any failure here leaves the Binance universe exactly as it was */
   let nByb=0; if(fx) nByb=await loadBybitUniverse(covered,first,seen);
   /* remove delisted / halted symbols */
@@ -6100,7 +6139,7 @@ async function loadBybitUniverse(covered,first,seen){
     pick.forEach(x=>{
       const ex=MK.syms.get(x.sym); if(ex&&ex.venue!=='B') return;                      // symbol already held by a Binance market
       seen.add(x.sym); n++; let r=ex;
-      if(!r){ r=mkRec(x.sym,'B',x.base,{listedAt:x.listedAt,noFlow:true}); r.kind='crypto'; r.isNew=!first; MK.syms.set(x.sym,r); if(!first) mlog('New listing detected: '+x.sym+' (Bybit perpetual)','ok'); }
+      if(!r){ r=mkRec(x.sym,'B',x.base,{listedAt:x.listedAt,noFlow:true}); r.kind='crypto'; r.cat=marketCat(x.base,{}); r.isNew=!first; MK.syms.set(x.sym,r); if(!first) mlog('New listing detected: '+x.sym+' (Bybit perpetual)','ok'); }
       const t=tk.get(x.sym); if(t){ r.q24=t.q24; r.chg24=t.chg24; r.fund=t.fund; if(!r.last) r.last=t.px; }
     });
     MK.syms.forEach((r,k)=>{ if(r.venue==='B'&&!now.has(k)){ MK.syms.delete(k); mlog('Removed '+k+' (no longer trading on Bybit)','warn'); } });
@@ -6462,6 +6501,7 @@ const HOOKS={
 };
 const hook=(name,a,b,c)=>{ try{ const f=HOOKS[name]; if(f) return f(a,b,c); }catch(e){ ERR++; MK.lastErr=e; } };
 const symName=r=>r.base||r.sym.replace(/USDT$/,'');
+const sigCat=s=>s.cat||(MK.syms.get(s.sym)||{}).cat||'crypto';
 const perfNow=()=>(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
 
 /* the measured record of each ICT model feeds a small rank tie-break (adv_ict2 perfMul): live closed signals count in full, back-test signals at half weight, and nothing happens until there are enough of them.
@@ -6602,9 +6642,10 @@ async function microFetch(rec){
   await Promise.allSettled(jobs);
 }
 function microGet(rec){ if(!rec.microP){ rec.microTry=Date.now(); rec.microP=microFetch(rec).then(()=>{ rec.microP=null; },()=>{ rec.microP=null; }); } return rec.microP; }
-/* The 1-minute scan is secondary (3m / 5m / 15m come first).  A 1-minute signal is issued only when it is exceptional: grade S, fully confirmed (class A), every higher timeframe aligned
-   and — where the unified quality score exists — a score of at least M1_UQ.  Anything less is skipped and only counted (DIAG.m1Skip).  Settings → "1-minute signals" = 'all' lifts the rule. */
-const M1_UQ=55;
+/* The 1-minute scan stays where it is (a scalp timeframe), but a 1-minute signal is issued only when it is SS-grade — the setups the engine is most sure of: grade S, fully confirmed (class A), every higher timeframe aligned,
+   and — where these layers exist for the signal — a unified quality score of at least M1_UQ, no order-book / tape conflict, and no liquidity warning (a raid the other way, a repeated raid, a stop sitting on a pool).
+   Anything less is skipped and only counted (DIAG.m1Skip).  Settings → "1-minute signals" = 'all' lifts the rule.  SS is a ranking label, not a probability. */
+const M1_UQ=60;
 function m1Exceptional(sig){
   if(SET.m1Mode==='all') return {ok:true,miss:[]};
   const miss=[];
@@ -6612,9 +6653,11 @@ function m1Exceptional(sig){
   if(sig.cls==='B') miss.push('not fully confirmed (class B)');
   if(sig.htfTag!=='ALIGNED') miss.push('higher timeframes '+String(sig.htfTag||'UNKNOWN').toLowerCase()+' (need aligned)');
   if(sig.uq&&sig.uq.score<M1_UQ) miss.push('quality '+sig.uq.score+' (needs '+M1_UQ+')');
+  if(sig.micro&&sig.micro.soft&&sig.micro.soft.length) miss.push('order book / tape lean against it');
+  if(sig.liq&&sig.liq.flags&&sig.liq.flags.length) miss.push('liquidity warning: '+sig.liq.flags[0]);
   return {ok:!miss.length,miss};
 }
-function m1Note(sig){ if(SET.m1Mode!=='all') sig.gates.push({ok:true,txt:'Exceptional 1-minute setup: grade S, fully confirmed, every higher timeframe aligned'+(sig.uq?', quality '+sig.uq.score:'')}); sig.m1Elite=SET.m1Mode!=='all'; }
+function m1Note(sig){ sig.ss=SET.m1Mode!=='all'; if(sig.ss) sig.gates.push({ok:true,txt:'SS-grade 1-minute setup: grade S, fully confirmed, every higher timeframe aligned'+(sig.uq?', quality '+sig.uq.score:'')+', no order-book or liquidity warning'}); sig.m1Elite=sig.ss; }
 function tryConfirmTf(rec,dir,id,sc,again){
   const bars=rec.bars, L=bars.length-1; if(!sc||!sc.ok||!L||!rec.tfT||rec.tfT[id]!==sc.t) return;
   const pk=TFSIG.key[id], P=PRESETS[pk], ctx=ctxFor(rec), t=bars[L].t+60, px=bars[L].c, h=rec.htf&&rec.htf.ok?rec.htf:null;
@@ -6672,7 +6715,7 @@ function tryConfirmTf(rec,dir,id,sc,again){
       sig.liq={pts:liq.pts,txt:liq.txt,flags:liq.flags,parts:liq.parts,target:liq.target,exposure:liq.exposure,behind:liq.behind,raid:liq.sweep?{txt:liq.sweep.txt,age:liq.sweep.age,again:liq.sweep.again,disp:liq.sweep.disp,dir:liq.sweep.dir}:null}; DIAG.liqSeen=(DIAG.liqSeen||0)+1; if(liq.flags.length) DIAG.liqFlag=(DIAG.liqFlag||0)+1; } }catch(e){ ERR++; MK.lastErr=e; liq=null; }
     sig.uq=unifiedQuality(sig,{micro:sig.micro,liq,against:eg?eg.against.map(h=>({id:h.id,strength:h.strength})):[],lone,cross:{with:act.filter(s=>s.dir===dir).length,against:act.filter(s=>s.dir===-dir).length}}); sig.sizeMul=uqSizeMul(sig.uq,sig.cls);
   }catch(e){ ERR++; MK.lastErr=e; }
-  if(id==='1m'){ const x=m1Exceptional(sig); if(!x.ok){ DIAG.m1Skip=(DIAG.m1Skip||0)+1; tfWhy(id,'1-minute setup is not exceptional: '+x.miss[0]); return; } m1Note(sig); }
+  if(id==='1m'){ const x=m1Exceptional(sig); if(!x.ok){ DIAG.m1Skip=(DIAG.m1Skip||0)+1; tfWhy(id,'1-minute setup is not SS-grade: '+x.miss[0]); return; } m1Note(sig); }
   if(sig.uq&&SET.minQ>0&&sig.uq.score<SET.minQ){ DIAG.uqLow=(DIAG.uqLow||0)+1; tfWhy(id,'unified quality below the minimum'); suppress(rec,dir,fake,id+' setup: quality '+sig.uq.score+' ('+sig.uq.tier+') is below your minimum of '+SET.minQ); return; }
   DIAG.tfIssued++; tfWhyBox(id).issued++; emitSignal(sig,rec);
 }
@@ -6688,7 +6731,11 @@ function moveStats(r){
 function applyTiers(){
   const recs=[...MK.syms.values()], on=SET.gainFirst!==false; if(on) recs.forEach(moveStats);
   const T=on?scanTiers(recs):null;
-  recs.forEach(r=>{ const t=T&&T.get(r.sym); if(t){ r.tier=t.tier; r.gainRank=t.gainRank; r.volRank=t.volRank; r.prio=t.prio; r.mover=t.mover||''; r.mvInfo=t.info||null; } else { r.tier=3; r.gainRank=0; r.volRank=0; r.prio=-(r.q24||0); r.mover=''; r.mvInfo=null; } });
+  recs.forEach(r=>{ const t=T&&T.get(r.sym); if(t){ r.tier=t.tier; r.gainRank=t.gainRank; r.volRank=t.volRank; r.prio=t.prio; r.mover=t.mover||''; r.mvInfo=t.info||null; } else { r.tier=3; r.gainRank=0; r.volRank=0; r.prio=-(r.q24||0); r.mover=''; r.mvInfo=null; } r.tfCore=false; });
+  /* TradFi markets (gold, silver, platinum, oil, gas, copper, stocks, ETFs): few, liquid in their own world and far less manipulated than small crypto — they are never left behind the top-N cut.
+     Priority: right after the top-30 gainers and the top-10 by volume (metals and energy first, then stocks, each by turnover) unless they are already in one of those tiers. */
+  { const trad=recs.filter(r=>r.cat&&r.cat!=='crypto'&&!r.stale&&(r.q24||0)>=PRIO.minQ/10).sort((x,y)=>(CAT_ORDER.indexOf(x.cat)-CAT_ORDER.indexOf(y.cat))||((y.q24||0)-(x.q24||0)));
+    trad.forEach((r,i)=>{ r.tfCore=true; if(on&&r.tier===3&&!r.mover) r.prio=150+i; }); }
   return recs;
 }
 /* a priority market: a top-30 gainer, a top-10 volume leader or a mover */
@@ -6711,6 +6758,7 @@ function tfRanks(){
   const a=[...MK.syms.values()].filter(r=>r.hist&&r.hydrated&&!r.stale&&r.bars.length>=ENG.minBars+8).sort(byPrio), n=SET.tfTop||200, core=a.filter(r=>r.tier<3).length;
   const n1=Math.min(n,Math.max(core,10,Math.round((SET.tf1Top||50)*TFL.scale)));         /* the 1-minute set may shrink under load, but never below the gainers + volume leaders */
   const base=a.slice(0,n), seen=new Set(base.map(r=>r.sym));
+  a.filter(r=>r.tfCore&&!seen.has(r.sym)).forEach(r=>{ base.push(r); seen.add(r.sym); });          /* the TradFi core is always read, whatever the cut */
   /* every other gainer (up 3 % or more, liquid enough) is read on the timeframes too — the Gainers tab looks for unabsorbed liquidity on ALL of them, not only the top 30 */
   a.filter(r=>r.tier===3&&!r.mover&&!seen.has(r.sym)&&r.venue!=='S'&&r.chg24>=3&&(r.q24||0)>=PRIO.minQ).sort((x,y)=>y.chg24-x.chg24).slice(0,SET.gainMore==null?40:SET.gainMore).forEach(r=>{ base.push(r); seen.add(r.sym); });
   MK.syms.forEach(r=>{ r.tfIn=false; r.tfIn1=false; r.tfRot=false; }); base.forEach(r=>{ r.tfIn=true; }); a.slice(0,n1).forEach(r=>{ r.tfIn1=true; });
@@ -6764,6 +6812,7 @@ function tryConfirm(rec,dir,again){
 }
 /* single entry point: registry (idempotent by id) → host hook → persistence. Dashboard cards, the feed and the API are all derived from REG.sigs, so they cannot disagree. */
 function emitSignal(sig,rec){
+  if(!sig.cat) sig.cat=(rec&&rec.cat)||'crypto';
   const s=REG.add(sig,sig.preset||SET.preset); if(s!==sig) return s;
   DIAG.issued++; hook('signal',s,rec); hook('persist'); return s;
 }
@@ -7065,7 +7114,7 @@ const LS_KEY='orbit17_v1', LS_BT='orbit17_bt1';
 function venueName(v){ return v==='B'?'Bybit USDT perpetual':v==='S'?'Binance spot':'Binance USDT-M perpetual'; }
 function venueTag(v){ return v==='B'?'Bybit F':v==='S'?'Binance spot':'Binance F'; }
 function venueKind(v){ return v==='B'?'Bybit perp':v==='S'?'spot':'perp'; }
-const UI={cardMax:60,fcls:'',tab:'sigs',dir:'L',stage:1,venue:'',tier:'',q:'',live:'live',pd:'all',mq:'',mf:'',ms:'q',sel:null,selTf:1,fq:'',fdir:'',fgrade:'',fhtf:'',fconv:'',feng:'',ftf:'',fvenue:'',fsort:'t',gdir:'',gconf:1,gst:'act',gq:'',arrived:{},layers:{plan:1,engine:1,vp:1,levels:1,zones:1,structure:1}};
+const UI={cardMax:60,fcat:'',fcls:'',tab:'sigs',dir:'L',stage:1,venue:'',tier:'',q:'',live:'live',pd:'all',mq:'',mf:'',ms:'q',sel:null,selTf:1,fq:'',fdir:'',fgrade:'',fhtf:'',fconv:'',feng:'',ftf:'',fvenue:'',fsort:'t',gdir:'',gconf:1,gst:'act',gq:'',arrived:{},layers:{plan:1,engine:1,vp:1,levels:1,zones:1,structure:1}};
 let toastN=0, audioCtx=null;
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $q=(s,r)=>(r||document).querySelector(s), $$=(s,r)=>[].slice.call((r||document).querySelectorAll(s));
@@ -7280,11 +7329,18 @@ function sigList(){
   let a=REG.sigs.filter(s=>s.trade.state!=='CLOSED'); const q=UI.fq.trim().toUpperCase();
   if(q) a=a.filter(s=>s.sym.indexOf(q)>=0); if(UI.fdir) a=a.filter(s=>String(s.dir)===UI.fdir);
   if(UI.fcls) a=a.filter(s=>s.src==='test'||(s.cls||'A')===UI.fcls);
-  if(UI.fgrade) a=a.filter(s=>s.src==='test'||GRADE_RANK[s.grade]>=GRADE_RANK[UI.fgrade]); if(UI.fhtf) a=a.filter(s=>(s.htfTag||'UNKNOWN')===UI.fhtf); if(UI.fconv) a=a.filter(s=>s.src==='test'||(s.conv&&TIER_RANK[s.conv]>=TIER_RANK[UI.fconv])); if(UI.ftf) a=a.filter(s=>s.src==='test'||(s.tf||'1m')===UI.ftf); if(UI.fvenue) a=a.filter(s=>s.src==='test'||s.venue===UI.fvenue); if(UI.feng) a=a.filter(s=>s.src==='test'||(s.eng&&s.eng.id===UI.feng)||(s.engines||[]).some(e=>e.id===UI.feng));
+  if(UI.fgrade) a=a.filter(s=>s.src==='test'||GRADE_RANK[s.grade]>=GRADE_RANK[UI.fgrade]); if(UI.fhtf) a=a.filter(s=>(s.htfTag||'UNKNOWN')===UI.fhtf); if(UI.fconv) a=a.filter(s=>s.src==='test'||(s.conv&&TIER_RANK[s.conv]>=TIER_RANK[UI.fconv])); if(UI.ftf) a=a.filter(s=>s.src==='test'||(s.tf||'1m')===UI.ftf); if(UI.fvenue) a=a.filter(s=>s.src==='test'||s.venue===UI.fvenue); if(UI.fcat) a=a.filter(s=>s.src==='test'||sigCat(s)===UI.fcat); if(UI.feng) a=a.filter(s=>s.src==='test'||(s.eng&&s.eng.id===UI.feng)||(s.engines||[]).some(e=>e.id===UI.feng));
   return a.sort(UI.fsort==='score'?(x,y)=>y.score-x.score:UI.fsort==='rr'?(x,y)=>y.plan.tps[1].r-x.plan.tps[1].r:(x,y)=>y.t-x.t);
 }
 const EV_CLS={signal:'entry',entry:'entry',tp1:'tp1',tp2:'tp2',tp3:'tp3',stop:'stop',closed:'closed',reassess:'reassess',suppressed:'suppressed'};
 /* one chip per timeframe with the number of open signals on it; tapping a chip filters the cards (same as the timeframe filter) */
+/* one chip per market class (crypto · gold / silver / metals · oil / gas · stocks / ETFs · indices): the TradFi perpetuals sit in the same feed, one tap filters them */
+function renderCatChips(all){
+  const el=$('catChips'); if(!el) return; const cnt={}, have={}; all.forEach(s=>{ if(s.src==='test') return; const k=sigCat(s); cnt[k]=(cnt[k]||0)+1; }); MK.syms.forEach(r=>{ if(r.cat&&r.cat!=='crypto'&&!r.stale) have[r.cat]=(have[r.cat]||0)+1; });
+  const tot=all.filter(s=>s.src!=='test').length, ids=CAT_ORDER.slice().reverse().filter(k=>k==='crypto'||cnt[k]||have[k]||UI.fcat===k);
+  el.innerHTML='<button class="chipbtn'+(!UI.fcat?' on':'')+(tot?' has':'')+'" data-cat="">All markets <b>'+tot+'</b></button>'+ids.map(k=>'<button class="chipbtn'+(UI.fcat===k?' on':'')+(cnt[k]?' has':'')+'" data-cat="'+k+'" title="'+CAT_NAME[k]+(k==='crypto'?'':' — '+(have[k]||0)+' market'+((have[k]||0)===1?'':'s')+' live now')+'">'+CAT_NAME[k]+' <b>'+(cnt[k]||0)+'</b></button>').join('');
+  el.querySelectorAll('.chipbtn').forEach(b=>{ b.onclick=()=>{ UI.fcat=b.dataset.cat; renderSignals(); }; });
+}
 function renderTfChips(all){
   const el=$('tfChips'); if(!el) return; const cnt={}; all.forEach(s=>{ if(s.src==='test') return; const k=s.tf||'1m'; cnt[k]=(cnt[k]||0)+1; });
   const tot=all.filter(s=>s.src!=='test').length;
@@ -7304,7 +7360,7 @@ function renderSignals(){
   if(!all.length) top+='<div class="warn info"><b>No confirmed setup right now.</b> The engine is watching '+MKT.n+' markets; '+w+' are in an early/pre-move stage but none has passed every confirmation gate ('+P.name+' preset: evidence ≥ '+P.minScore+', ≥ '+P.minFams+' independent families, no manipulation flags, logical stop, R:R ≥ '+P.minRR+', higher timeframes not in conflict). Waiting is a valid position.</div>';
   top+=funnelStrip();
   setHTML('sigTop',top);
-  renderTfChips(all);
+  renderCatChips(all); renderTfChips(all);
   const fm=UI.ftf?engineRadar(500).filter(x=>x.tf===UI.ftf).length:0;
   const cap=UI.cardMax||60, shown=act.slice(0,cap);
   setHTML('sigActive',act.length?shown.map(sigCard).join('')+(act.length>cap?'<button class="btn" id="moreCards" style="grid-column:1/-1">Show '+Math.min(60,act.length-cap)+' more ('+(act.length-cap)+' not shown — newest first)</button>':''):'<div class="empty-radar" style="grid-column:1/-1">'+(all.length?'No active signal matches the filters.':'No active signals.')+(UI.ftf&&UI.ftf!=='1m'?'<br><span class="mut" style="font-size:12px">'+(SET.tfs.indexOf(UI.ftf)<0?UI.ftf+' scanning is switched off in Settings.':fm+' '+UI.ftf+' setup'+(fm===1?' is':'s are')+' forming on the Radar tab — a signal appears only after every gate passes.')+'</span>':'')+'</div>');
@@ -7405,7 +7461,7 @@ function sigCard(s){
   const cls=(L?'buy':'sell')+(t.outcome==='WIN'?' win':t.outcome==='LOSS'?' loss':'')+(fresh?' just-arrived':'');
   const why=(s.why||[]).slice(0,3).map(w=>'<li><b>'+esc(w.name)+':</b> '+esc(w.txt)+'</li>').join('');
   const ev=s.events||[];
-  return '<div class="signal-card '+cls+'" data-id="'+esc(s.id)+'"><div class="card-header"><span class="nm" data-sym="'+s.sym+'">'+esc(symName(r))+'</span><span class="badge '+(L?'buy':'sell')+'">'+(L?'LONG':'SHORT')+'</span>'+(test?'<span class="badge test">TEST</span>':'<span class="badge etype">'+esc(s.etype||'Signal')+'</span><span class="badge tf" title="candle size the setup was detected on · trade category · exchange the price comes from">'+esc(s.tf||'1m')+' '+esc((TF_CAT[s.tf||'1m']||'').toLowerCase())+' · '+venueTag(s.venue)+'</span>'+(s.noFlow?'<span class="badge nf" title="This exchange\'s candles carry no taker-buy volume or trade count, so order-flow evidence is not available for this coin. The setup comes from the engines alone.">no taker-flow data</span>':'')+(s.cls==='B'?'<span class="badge clsb" title="Class B: the engine setup is confirmed and every risk gate passed, but a confirmation is short — see the note on the card">CLASS B</span>':'')+'<span class="badge tier-'+esc(s.grade||'C')+'" title="evidence grade — a ranking of how much independent evidence agrees, not a probability">GRADE '+esc(s.grade||'C')+'</span>'+(s.mode==='ENGINE'&&s.eng?'<span class="badge eng" title="a setup raised by one engine on its own — see the Engines tab">⚙ '+esc(s.eng.id)+' · '+esc(s.eng.name)+'</span>':'<span class="badge '+(s.stage>=4?'confirmed s4':'prov')+'">'+esc(s.label)+'</span>')+(s.conv?'<span class="badge conv-'+esc(s.conv)+'" title="institutional conviction tier — a rule-based ranking, not a probability">'+esc(tierName(s.conv))+'</span>':''))+'<span class="px">'+pf(px)+'<br>'+ago(nowSec()-s.t)+' ago</span></div>'+
+  return '<div class="signal-card '+cls+'" data-id="'+esc(s.id)+'"><div class="card-header"><span class="nm" data-sym="'+s.sym+'">'+esc(symName(r))+'</span><span class="badge '+(L?'buy':'sell')+'">'+(L?'LONG':'SHORT')+'</span>'+(test?'<span class="badge test">TEST</span>':'<span class="badge etype">'+esc(s.etype||'Signal')+'</span><span class="badge tf" title="candle size the setup was detected on · trade category · exchange the price comes from">'+esc(s.tf||'1m')+' '+esc((TF_CAT[s.tf||'1m']||'').toLowerCase())+' · '+venueTag(s.venue)+'</span>'+(sigCat(s)!=='crypto'?'<span class="badge mcat" title="'+esc(CAT_NAME[sigCat(s)]||'')+' — a TradFi perpetual traded on the crypto exchange">'+esc(marketTitle(r.base||s.sym.replace(/USDT$/,''))||CAT_SHORT[sigCat(s)]||'')+'</span>':'')+(s.ss?'<span class="badge ss" title="SS-grade 1-minute setup: grade S, fully confirmed, every higher timeframe aligned, no order-book or liquidity warning — a ranking, not a probability">SS</span>':'')+(s.noFlow?'<span class="badge nf" title="This exchange\'s candles carry no taker-buy volume or trade count, so order-flow evidence is not available for this coin. The setup comes from the engines alone.">no taker-flow data</span>':'')+(s.cls==='B'?'<span class="badge clsb" title="Class B: the engine setup is confirmed and every risk gate passed, but a confirmation is short — see the note on the card">CLASS B</span>':'')+'<span class="badge tier-'+esc(s.grade||'C')+'" title="evidence grade — a ranking of how much independent evidence agrees, not a probability">GRADE '+esc(s.grade||'C')+'</span>'+(s.mode==='ENGINE'&&s.eng?'<span class="badge eng" title="a setup raised by one engine on its own — see the Engines tab">⚙ '+esc(s.eng.id)+' · '+esc(s.eng.name)+'</span>':'<span class="badge '+(s.stage>=4?'confirmed s4':'prov')+'">'+esc(s.label)+'</span>')+(s.conv?'<span class="badge conv-'+esc(s.conv)+'" title="institutional conviction tier — a rule-based ranking, not a probability">'+esc(tierName(s.conv))+'</span>':''))+'<span class="px">'+pf(px)+'<br>'+ago(nowSec()-s.t)+' ago</span></div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap">'+(s.regime&&s.regime!=='UNKNOWN'?'<span class="badge regime">'+esc(s.regime.replace('_',' '))+'</span>':'')+(s.sess?'<span class="badge regime">'+esc(s.sess)+'</span>':'')+'<span class="badge htf-'+esc(s.htfTag||'UNKNOWN')+'">HTF '+esc(s.htfTag||'UNKNOWN')+'</span>'+(s.tier?'<span class="badge tier-C">'+esc(tierTxt(s.tier))+' liquidity</span>':'')+'</div>'+
     (test?'':basisRow(s)+qualityRow(s)+liqRow(s)+microRow(s))+
     (test?'':classBanner(s))+
@@ -7434,12 +7490,12 @@ function renderMarkets(){
   const h=MK.hydrate, tot=h.total||MK.syms.size, hyd=recs().filter(r=>r.hist).length, q=UI.mq.trim().toUpperCase();
   setHTML('hydBox',(h.running||hyd<tot)?'<div class="panel"><div class="pb"><b>Hydrating market history</b> <span class="mono mut">'+hyd+' / '+tot+'</span><div class="prog" style="margin-top:8px"><i style="width:'+(tot?hyd/tot*100:0).toFixed(0)+'%"></i></div><div class="note" style="margin-top:6px">Each coin needs ~8 hours of 1-minute candles before its volume baseline is meaningful. Coins start being analysed as soon as their history arrives, most liquid first.</div></div></div>':'');
   let list=recs();
-  if(UI.mf==='F'||UI.mf==='S'||UI.mf==='B') list=list.filter(r=>r.venue===UI.mf); if(UI.mf==='N') list=list.filter(r=>r.isNew||(r.ageDays!=null&&r.ageDays<30)); if(q) list=list.filter(r=>r.sym.indexOf(q)>=0);
+  if(UI.mf==='F'||UI.mf==='S'||UI.mf==='B') list=list.filter(r=>r.venue===UI.mf); if(UI.mf==='N') list=list.filter(r=>r.isNew||(r.ageDays!=null&&r.ageDays<30)); if(UI.mf==='metal'||UI.mf==='energy'||UI.mf==='equity') list=list.filter(r=>r.cat===UI.mf||(UI.mf==='equity'&&r.cat==='index')); if(q) list=list.filter(r=>r.sym.indexOf(q)>=0);
   const key=UI.ms==='c'?(r=>Math.abs(r.chg24)):UI.ms==='o'?(r=>r.ev?Math.max(r.ev.up.opp,r.ev.dn.opp):-1):(r=>r.q24);
   list.sort((a,b)=>key(b)-key(a)); $('mSub').textContent=list.length+' markets · '+(MK.counts?MK.counts.perp+' perps + '+MK.counts.spot+' spot-only'+(MK.counts.bybit?' + '+MK.counts.bybit+' Bybit-only':''):'');
   let o='<div class="row hd"><span>COIN</span><span>STAGE (LONG / SHORT)</span><span>24H</span><span>PRICE</span><span class="hide-m">24H VOL</span><span class="hide-m">15M</span><span class="hide-m">NOTES</span></div>';
   list.slice(0,150).forEach(r=>{ const e=r.ev;
-    o+='<div class="row" data-sym="'+r.sym+'"><span class="sym"><b>'+esc(symName(r))+'</b><small>'+(r.venue==='F'?'USDT-M perp':r.venue==='B'?'Bybit perp · no taker-flow':'spot')+(r.kind&&r.kind!=='crypto'&&r.kind!=='spot'?' · '+esc(r.kind):'')+'</small></span><span>'+(e?chip(e.up.stage,true)+' '+(e.dn.stage?chip(e.dn.stage,false):''):'<span class="mut mono">'+(r.hist?'—':'loading…')+'</span>')+'</span><span class="mono '+(r.chg24>=0?'up':'dn')+'">'+pc(r.chg24,1)+'</span><span class="mono">'+pf(r.last||(r.bars.length?r.bars[r.bars.length-1].c:0))+'</span><span class="mono hide-m">'+money(r.q24)+'</span><span class="mono hide-m '+(e&&e.M.ret15>=0?'up':'dn')+'">'+(e?pc(e.M.ret15,1):'–')+'</span><span class="hide-m">'+flagsOf(r)+'</span></div>'; });
+    o+='<div class="row" data-sym="'+r.sym+'"><span class="sym"><b>'+esc(symName(r))+'</b><small>'+(r.venue==='F'?'USDT-M perp':r.venue==='B'?'Bybit perp · no taker-flow':'spot')+(r.cat&&r.cat!=='crypto'?' · '+esc(marketTitle(r.base)||CAT_NAME[r.cat]):(r.kind&&r.kind!=='crypto'&&r.kind!=='spot'?' · '+esc(r.kind):''))+'</small></span><span>'+(e?chip(e.up.stage,true)+' '+(e.dn.stage?chip(e.dn.stage,false):''):'<span class="mut mono">'+(r.hist?'—':'loading…')+'</span>')+'</span><span class="mono '+(r.chg24>=0?'up':'dn')+'">'+pc(r.chg24,1)+'</span><span class="mono">'+pf(r.last||(r.bars.length?r.bars[r.bars.length-1].c:0))+'</span><span class="mono hide-m">'+money(r.q24)+'</span><span class="mono hide-m '+(e&&e.M.ret15>=0?'up':'dn')+'">'+(e?pc(e.M.ret15,1):'–')+'</span><span class="hide-m">'+flagsOf(r)+'</span></div>'; });
   setHTML('mList',o);
 }
 
@@ -7472,7 +7528,7 @@ function funnelStrip(){
 /* per timeframe: scans → setups seen → passed the gates → issued, with the most common blocking reasons (so a quiet timeframe can be understood, not guessed at) */
 function tfFunnelHtml(){
   const ids=TFSIG.ids.filter(id=>DIAG.tfBy[id]), n1=Math.max(10,Math.round((SET.tf1Top||30)*TFL.scale));
-  const load='<div class="note" style="margin-top:8px">Scan load: '+Math.round(TFL.duty*100)+'% of the time spent evaluating timeframes (30-second average) · 1-minute universe: '+n1+' coins'+(TFL.scale<1?' <b>(reduced automatically to keep the phone smooth)</b>':'')+(SET.tfRot>0?' · patrol of the other markets (3m / 5m): '+TFROT.seen.size+' of '+TFROT.tail+' read since this page opened':'')+(SET.m1Mode!=='all'?' · 1-minute setups skipped as not exceptional: '+(DIAG.m1Skip||0):'')+'</div>';
+  const load='<div class="note" style="margin-top:8px">Scan load: '+Math.round(TFL.duty*100)+'% of the time spent evaluating timeframes (30-second average) · 1-minute universe: '+n1+' coins'+(TFL.scale<1?' <b>(reduced automatically to keep the phone smooth)</b>':'')+(SET.tfRot>0?' · patrol of the other markets (3m / 5m): '+TFROT.seen.size+' of '+TFROT.tail+' read since this page opened':'')+(SET.m1Mode!=='all'?' · 1-minute setups skipped (not SS-grade): '+(DIAG.m1Skip||0):'')+'</div>';
   if(!ids.length) return '<div class="note" style="margin-top:12px">Per-timeframe scan results appear after the first candle of each timeframe closes.</div>'+load;
   return '<h4 class="mut" style="margin:14px 0 6px">Per timeframe — where setups stop (since this page was opened)</h4><div class="tw"><table class="t"><tr><th>TF</th><th>Scans</th><th>Setups seen</th><th>Passed all gates</th><th>Issued (A+B)</th><th>of them class B</th><th>Most common blockers</th></tr>'+
     ids.map(id=>{ const W=DIAG.tfBy[id], top=Object.entries(W.why).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,n])=>esc(k)+' ×'+n).join('<br>'); return '<tr><td><b>'+id+'</b></td><td class="mono">'+W.scan+'</td><td class="mono">'+W.hit+'</td><td class="mono">'+W.pass+'</td><td class="mono"><b>'+W.issued+'</b></td><td class="mono">'+(W.issuedB||0)+'</td><td class="mut" style="font-size:11px">'+(top||'—')+'</td></tr>'; }).join('')+'</table></div>'+load;
@@ -7484,14 +7540,14 @@ function renderSettings(){
   const P=PRESETS[SET.preset]; $('presetSel').value=SET.preset;
   setHTML('setBox','<b style="letter-spacing:1px;font-size:12px">SETTINGS</b>'+
     '<label class="note">Signal preset</label>'+o('preset',[['ELITE','Elite — high-conviction only, evidence ≥66, 5 families'],['STRICT','Strict — evidence ≥62, 4 families'],['BALANCED','Balanced — evidence ≥55, 3 families'],['EARLY','Early — evidence ≥48, 3 families'],['ENGINE','Engine-led — one engine setup is enough (strength ≥60), all safety gates stay']])+'<div class="note" style="margin-top:4px">Now: '+(P.indep?'a single engine setup of strength ≥ '+Math.round(P.engMin*100)+' (pump/dump stage and evidence-count gates do not apply)':'evidence ≥ '+P.minScore+', ≥ '+P.minFams+' families')+(P.advTier?', conviction ≥ '+tierName(P.advTier):'')+', R:R ≥ '+P.minRR+'. The Backtest Lab compares all presets on the same data.</div>'+
-    '<label class="note">Timeframes the engines scan for signals. Scalps: 3m / 5m / 15m are judged first. Intraday: 30m / 1h / 4h. 12h and 1d are position trades: off by default (the daily, 3-day, 5-day and weekly charts are still read, as the higher-timeframe trend behind every signal). The 1-minute scan runs last and a 1-minute signal is issued only when it is exceptional (3m / 5m use the live 1-minute stream; the rest download exchange candles)</label>'+tfSetHtml()+'<label class="note">Scalp sensitivity (1m / 3m / 5m / 15m): the minimum setup strength. Every risk, room, manipulation, structure and higher-timeframe gate stays on in all three modes — "More" only lets slightly cleaner-than-minimum formations through, so expect more signals and a lower average grade (see Performance by grade).</label>'+o('scalp',[['strict','Strict — strength ≥ 66'],['balanced','Balanced — strength ≥ 60 (default)'],['more','More signals — strength ≥ 55']])+o('tf1Top',[[30,'1-minute engine scan: leading coins only (default)'],[60,'1-minute engine scan: 60 most liquid coins'],[100,'1-minute engine scan: 100 coins (heavy on a phone)']])+o('tfTop',[[60,'Scan the 60 most liquid coins per timeframe'],[100,'Scan the 100 most liquid coins'],[150,'Scan the 150 most liquid coins'],[200,'Scan the 200 most liquid coins (default)'],[250,'Scan the 250 most liquid coins (heavier on a phone)']])+
+    '<label class="note">Timeframes the engines scan for signals. Scalps: 3m / 5m / 15m are judged first. Intraday: 30m / 1h / 4h. 12h and 1d are position trades: off by default (the daily, 3-day, 5-day and weekly charts are still read, as the higher-timeframe trend behind every signal). The 1-minute scan runs last and a 1-minute signal is issued only when it is SS-grade, i.e. very sure (3m / 5m use the live 1-minute stream; the rest download exchange candles)</label>'+tfSetHtml()+'<label class="note">Scalp sensitivity (1m / 3m / 5m / 15m): the minimum setup strength. Every risk, room, manipulation, structure and higher-timeframe gate stays on in all three modes — "More" only lets slightly cleaner-than-minimum formations through, so expect more signals and a lower average grade (see Performance by grade).</label>'+o('scalp',[['strict','Strict — strength ≥ 66'],['balanced','Balanced — strength ≥ 60 (default)'],['more','More signals — strength ≥ 55']])+o('tf1Top',[[30,'1-minute engine scan: leading coins only (default)'],[60,'1-minute engine scan: 60 most liquid coins'],[100,'1-minute engine scan: 100 coins (heavy on a phone)']])+o('tfTop',[[60,'Scan the 60 most liquid coins per timeframe'],[100,'Scan the 100 most liquid coins'],[150,'Scan the 150 most liquid coins'],[200,'Scan the 200 most liquid coins (default)'],[250,'Scan the 250 most liquid coins (heavier on a phone)']])+
     '<label class="note">Spot Outlook (investment view of the major coins, daily candles, runs in the background)</label>'+o('spotOn',[['true','On'],['false','Off']])+'<div style="height:6px"></div>'+o('spotN',[[3,'3 coins — BTC, ETH, SOL'],[5,'5 coins — BTC, ETH, SOL + 2 most-traded'],[8,'8 coins'],[12,'12 coins']])+
     '<label class="note">Account size (USD) — position sizing &amp; paper account</label><input class="ctl" type="number" min="100" step="100" data-set="acct" value="'+SET.acct+'">'+
     '<label class="note">Risk per trade</label>'+o('riskPct',[[.25,'0.25% of account'],[.5,'0.5% of account'],[1,'1% of account'],[2,'2% of account']])+
     '<label class="note">Signal flow</label>'+o('flow',[['all','All: class A + class B, including setups with only ONE engine cluster behind them — the most signals'],['balanced','Balanced: class A + class B where the engines agree twice but the institutional read is only weak'],['strict','Strict: class A only']])+
     '<label class="note">Minimum quality score — every setup gets a 0–100 rank from agreement of independent schools, conflicts, higher timeframes, unabsorbed zones, risk and timing (a rank, not a probability). Setups below it are not issued and are listed under “not issued”</label>'+o('minQ',[[0,'Off — every setup that passes the gates (default)'],[40,'40 — drop only the weakest'],[55,'55 — Strong and Prime only'],[70,'70 — Prime only, very few signals']])+
     '<label class="note">Patrol of the other markets — markets below the scanned set are read on the 3m and 5m candles in a rotating window (no extra downloads; the full round takes a few minutes)</label>'+o('tfRot',[[25,'On — 25 markets every 30 seconds (default)'],[50,'On — 50 markets every 30 seconds (faster round, more CPU)'],[0,'Off — only the scanned set']])+
-    '<label class="note">1-minute signals — the 1-minute scan is secondary to 3m / 5m / 15m</label>'+o('m1Mode',[['elite','Exceptional only — grade S, fully confirmed, every higher timeframe aligned, quality ≥ 55 (default)'],['all','Every 1-minute setup that passes the gates']])+
+    '<label class="note">1-minute signals — a 1-minute signal is issued only when the engine is very sure</label>'+o('m1Mode',[['elite','SS-grade only — grade S, fully confirmed, every higher timeframe aligned, quality ≥ 60, no order-book or liquidity warning (default)'],['all','Every 1-minute setup that passes the gates']])+
     '<label class="note">Sound / popup for class B</label>'+o('alertB',[['false','Off — class B goes quietly to the feed'],['true','On — same alerts as class A']])+
     '<label class="note">Scan order</label>'+o('gainFirst',[['true','Top-30 gainers first → top-10 by volume → pumped / hot / falling movers → the rest (a long on a coin already +25% needs the higher timeframes aligned; at +50% near its high it waits for a pullback)'],['false','Most liquid first (no gainer priority)']])+
     '<label class="note">Signal strictness</label>'+o('precision',[['true','Precision — a second independent confirmation, BTC not against it (fewer, stricter signals)'],['false','Standard — one confirmed method is enough']])+
